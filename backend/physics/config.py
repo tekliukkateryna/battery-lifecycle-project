@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import cached_property
 import numpy as np
 
 
@@ -14,12 +15,19 @@ class BatteryGeometry:
     L_s: float = 25e-6
     L_p: float = 80e-6
 
+    # Spatial discretization step along thickness (x) [m]
+    dx: float = 5e-6
+
+    # Це перевірка на те, що все поділиться націло і сітка буде рівномірна
+    def __post_init__(self):
+        for name in ("L_n", "L_s", "L_p"):
+            n = getattr(self, name) / self.dx
+            if not np.isclose(n, round(n)):
+                raise ValueError(f"{name} must be a multiple of dx")
+
     # Particle radii [m]
     R_n: float = 10e-6
     R_p: float = 10e-6
-
-    # Spatial discretization step along thickness (x) [m]
-    dx: float = 10e-6
 
     # Porosity (volume fraction of liquid electrolyte)
     eps_n: float = 0.3
@@ -27,65 +35,72 @@ class BatteryGeometry:
     eps_p: float = 0.3
 
     # Bruggemann's coefficients
-    B_n: float = 0.3**1.5
-    B_s: float = 0.4**1.5
-    B_p: float = 0.3**1.5
-
-    # --- Number of points in zones ---
+    brug: float = 1.5
     @property
-    def N_x_n(self) -> int:
-        return int(np.round(self.L_n / self.dx))
-
+    def B_n(self) -> float: return self.eps_n ** self.brug
     @property
-    def N_x_s(self) -> int:
-        return int(np.round(self.L_s / self.dx))
-
+    def B_s(self) -> float: return self.eps_s ** self.brug
     @property
-    def N_x_p(self) -> int:
-        return int(np.round(self.L_p / self.dx))
+    def B_p(self) -> float: return self.eps_p ** self.brug
+
+    # Number of points in zones
+    @property
+    def N_x_n(self) -> int: return int(np.round(self.L_n / self.dx))
 
     @property
-    def N_x_total(self) -> int:
-        return self.N_x_n + self.N_x_s + self.N_x_p
+    def N_x_s(self) -> int: return int(np.round(self.L_s / self.dx))
 
-    # --- Dynamic grids ---
     @property
+    def N_x_p(self) -> int: return int(np.round(self.L_p / self.dx))
+
+    @property
+    def N_x_total(self) -> int: return self.N_x_n + self.N_x_s + self.N_x_p
+
+    # Dynamic grids
+    @cached_property
     def x_e(self) -> np.ndarray:
         return (np.arange(self.N_x_total) + 0.5) * self.dx
 
-    @property
+    @cached_property
     def r_n(self) -> np.ndarray:
         return np.linspace(0, self.R_n, self.N_r_n)
 
-    @property
+    @cached_property
     def r_p(self) -> np.ndarray:
         return np.linspace(0, self.R_p, self.N_r_p)
 
 @dataclass
 class BatteryParameters:
-    # Faraday and Gas constant
+    # Electrochemical parameters based on Marquis et al. (2019)
     F: float = 96485.33
     R: float = 8.31446
+    T_ref: float = 298.15
 
-    K_n: float = 1.0616e-11
-    K_p: float = 6.7164e-12
+    # Kinetic coefficients converted to BV
+    K_n: float = 8.19e-5
+    K_p: float = 5.03e-6
 
-    # Reference diffusion coefficients at T = 298.15 K [m²/s]
-    D_s_n_ref: float = 3.9e-14  # Solid-phase anode
-    D_s_p_ref: float = 1.0e-14  # Solid-phase cathode
-    D_e_ref: float = 2.6e-10  # Electrolyte
+    # Reference diffusion coefficients
+    D_s_n_ref: float = 3.9e-14
+    D_s_p_ref: float = 1.0e-13
+    D_e_ref: float = 5.34e-10
+
+    # Conductivities [S/m]
+    sigma_n: float = 100.0
+    sigma_p: float = 10.0
+    sigma_e: float = 1.1
+
+    # Electrochemistry
+    t_plus: float = 0.4
+    c_n_max: float = 24983.0 # Graphite anode
+    c_p_max: float = 51218.0 # NMC cathode [mol/m^3]
+    c_e_0: float = 1000.0
 
     # Activation energy (Arrhenius) [J/mol]
     Ea_Ds_n: float = 35000.0
     Ea_Ds_p: float = 29000.0
     Ea_De: float = 15000.0
     Ea_sei: float = 38000.0
-
-    # Electrochemistry
-    t_plus: float = 0.38  # Li+ ion transfer number
-    c_n_max: float = 33133.0  # Graphite anode [mol/m^3]
-    c_p_max: float = 51217.0  # NMC cathode [mol/m^3]
-    c_e_0: float = 1000.0
 
     # Thermal Parameters
     mass: float = 0.04
@@ -98,7 +113,19 @@ class BatteryParameters:
     k_sei_ref: float = 1e-12  # Reaction constant [m/s]
     M_sei: float = 0.162  # Molar mass [kg/mol]
     rho_sei: float = 2100.0  # Density [kg/m³]
-    delta_sei = 5e-9  # SEI Thickness already [m]
+    L_sei_init: float = 5e-9  # SEI initial Thickness [m]
+    T_ref: float = 298.15       # [K]
+
+    D_sol_ref: float = 1.0e-21      # [m²/s]
+    Ea_k_sei: float = 40000.0       # [J/mol]
+    Ea_D_sol: float = 67000.0       # [J/mol]
+
+    U_sei: float = 0.4        # [V], provisional
+    alpha_sei: float = 0.5    # [-]
+    c_sol_e: float = 4500.0   # [mol/m³], provisional
+    sigma_sei: float = 5e-6
+    # SEI formation stoichiometry
+    n_sei: float = 1.0        # [mol e- / mol SEI product]
 
     # Dynamic calculations of specific geometries
     def get_b_n(self, geo: BatteryGeometry) -> float:
@@ -107,18 +134,35 @@ class BatteryParameters:
     def get_b_p(self, geo: BatteryGeometry) -> float:
         return 3.0 * (1.0 - geo.eps_p) / geo.R_p
 
+    def get_b_s(self, geo: BatteryGeometry) -> float:
+            return 0
 
+
+@dataclass
 class SimulationConfig:
 
-    def __init__(
-        self, param: BatteryParameters
-    ):
-        self.Iapp = 2.5  # Applied current [A]
-        self.t_final = 3600.0  # Simulation time [s]
+    i_app: float = 2.5       # [A/m²]
+    A_cell: float = 0.01     # [m²]
+    t_final: float = 3600.0
 
-        # Initial concentrations [mol/m³]
-        self.c_s_n_init = 25000.0  # Lithium in the anode
-        self.c_s_p_init = 10000.0  # Lithium in the cathode
-        self.c_e_init = 1000.0  # Electrolyte
+    theta_n_init: float = 0.8
+    theta_p_init: float = 0.6
 
-        self.T_init = param.T_amb  # Initial temperature [K]
+    c_e_init: float = 1000.0
+    T_init: float = 298.15
+
+    @property
+    def I_app(self) -> float:
+        return self.i_app * self.A_cell
+
+    def initial_solid_concentrations(self, param):
+        return (
+            self.theta_n_init * param.c_n_max,
+            self.theta_p_init * param.c_p_max
+        )
+
+    def OCV_n(self, theta):
+        raise NotImplementedError("OCV_n is not defined")
+
+    def OCV_p(self, theta):
+        raise NotImplementedError("OCV_p is not defined")

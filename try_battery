@@ -1,0 +1,89 @@
+"""No real data, just test to see whether it works"""
+
+import matplotlib.pyplot as plt
+
+from backend.physics.config import BatteryGeometry, BatteryParameters, SimulationConfig
+from backend.physics.simulation import BatterySimulation
+
+geo = BatteryGeometry()
+param = BatteryParameters()
+sim = SimulationConfig()
+
+# !!!!!!!!!!!!!! ТИМЧАСОВІ OCV
+sim.OCV_n = lambda theta: 0.10 + 0.20 * (1.0 - theta)
+sim.OCV_p = lambda theta: 4.10 - 0.60 * theta
+
+model = BatterySimulation(
+    geo, param, sim,
+    enable_sei=True,
+    enable_thermal=True,
+)
+
+solution = model.run(t_final=300, num_points=101)
+d = model.diagnostics(solution)
+
+print(f"ODE states: {solution.y.shape[0]}")
+print(f"Initial V: {d['voltage_V'][0]:.4f} V")
+print(f"Final V: {d['voltage_V'][-1]:.4f} V")
+print(f"Final temperature: {d['temperature_K'][-1]:.2f} K")
+print(f"SEI thickness: {d['sei_thickness_m'][-1] * 1e9:.5f} nm")
+print(f"Li loss: {d['capacity_loss_Ah'][-1]:.6e} Ah")
+
+plt.figure()
+plt.plot(d["time_s"], d["voltage_V"])
+plt.xlabel("Time [s]")
+plt.ylabel("Terminal voltage [V]")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+
+sol = model.run(t_final=300)
+d = model.diagnostics(sol)
+
+# SEI film growth
+growth_nm = (
+    d["sei_thickness_m"][-1]
+    - d["sei_thickness_m"][0]
+) * 1e9
+
+print(f"SEI growth: {growth_nm:.6f} nm")
+
+# Lithium loss calculated from SEI thickness
+A_active = (
+    sim.A_cell
+    * param.get_b_n(geo)
+    * geo.L_n
+)
+
+Q_from_growth = (
+    A_active
+    * param.n_sei
+    * param.F
+    * param.rho_sei
+    * (d["sei_thickness_m"][-1]
+       - d["sei_thickness_m"][0])
+    / param.M_sei
+)
+
+Q_from_model = d["capacity_loss_Ah"][-1] * 3600
+
+print(f"LLI from SEI growth: {Q_from_growth:.8e} C")
+print(f"LLI from ODE state:  {Q_from_model:.8e} C")
+
+# Compare SEI current at initial state
+c_s_n, _, c_e, T, L_sei, _ = model.unpack(
+    sol.y[:, 0]
+)
+
+j_sei, eta_sei = model.sei_current(
+    c_s_n, c_e, T, L_sei
+)
+
+j_rl = model.sei.compute_j_rl(T, eta_sei)
+j_dl = model.sei.compute_j_dl(T, L_sei)
+
+print(f"j_sei: {j_sei:.8e} A/m²")
+print(f"j_rl:  {j_rl:.8e} A/m²")
+print(f"j_dl:  {j_dl:.8e} A/m²")
+print(f"j_sei / j_dl: {j_sei / j_dl:.6f}")
