@@ -43,6 +43,9 @@ class BatterySimulation:
         self.i_Q = self.i_T + 2
         self.n_states = self.i_Q + 1
 
+        # not to recalculate every time
+        self._b_n = param.get_b_n(geo)
+
         # States have very different units/scales; protect the nanometre SEI state.
         self.atol = np.full(self.n_states, 1e-5)
         self.atol[self.i_T] = 1e-6
@@ -82,7 +85,7 @@ class BatterySimulation:
         )
 
     def sei_current(self, c_s_n, c_e, T, L_sei):
-        """Return (j_sei [A/m^2 active area], eta_sei [V])."""
+        
         if not self.enable_sei:
             return 0.0, 0.0
 
@@ -103,6 +106,9 @@ class BatterySimulation:
         )
 
     def rhs(self, t, y):
+
+        self.sim.i_app = self.sim.get_i_app(t)
+
         c_s_n, c_s_p, c_e, T, L_sei, _ = self.unpack(y)
 
         j_sei, _ = self.sei_current(c_s_n, c_e, T, L_sei)
@@ -114,8 +120,7 @@ class BatterySimulation:
 
         # SEI film growth and lithium inventory loss
         if self.enable_sei:
-            a_n = self.param.get_b_n(self.geo)
-            active_area = self.sim.A_cell * a_n * self.geo.L_n
+            active_area = self.sim.A_cell * self._b_n * self.geo.L_n
             dL_dt, dQ_dt = self.sei.compute_derivatives(j_sei, active_area)
             dy[self.i_L] = dL_dt
             dy[self.i_Q] = dQ_dt
@@ -123,7 +128,7 @@ class BatterySimulation:
         # Isothermal mode: retain temperature as a state but dT/dt=0.
         if self.enable_thermal:
             film_thickness_for_voltage = L_sei if self.enable_sei else 0.0
-            Ueq = self.voltage.Ueq(c_s_n, c_s_p)
+            Ueq = self.voltage.Ueq(c_s_n, c_s_p, T, j_sei)
             V = self.voltage.calculate(
                 c_s_n, c_s_p, c_e, T,
                 film_thickness_for_voltage, j_sei
@@ -132,7 +137,7 @@ class BatterySimulation:
 
             if self.include_reversible_heat:
                 dy[self.i_T] = self.thermal.compute_derivatives(
-                    T, Ueq, V, I_app, c_s_n, c_s_p
+                    T, Ueq, V, I_app, c_s_n, c_s_p, j_sei
                 )
             else:
                 Q_irr = self.thermal.compute_Q_irr(I_app, Ueq, V)

@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
+from typing import Callable, Union
 import numpy as np
 
 
@@ -63,18 +64,19 @@ class BatteryGeometry:
 
     @cached_property
     def r_n(self) -> np.ndarray:
-        return np.linspace(0, self.R_n, self.N_r_n)
+        dr = self.R_n / self.N_r_n
+        return (np.arange(self.N_r_n) + 0.5) * dr
 
     @cached_property
     def r_p(self) -> np.ndarray:
-        return np.linspace(0, self.R_p, self.N_r_p)
+        dr = self.R_p / self.N_r_p
+        return (np.arange(self.N_r_p) + 0.5) * dr
 
 @dataclass
 class BatteryParameters:
     # Electrochemical parameters based on Marquis et al. (2019)
     F: float = 96485.33
     R: float = 8.31446
-    T_ref: float = 298.15
 
     # Kinetic coefficients converted to BV
     K_n: float = 8.19e-5
@@ -119,6 +121,7 @@ class BatteryParameters:
     D_sol_ref: float = 1.0e-21      # [m²/s]
     Ea_k_sei: float = 40000.0       # [J/mol]
     Ea_D_sol: float = 67000.0       # [J/mol]
+    # Note: T_ref is shared with the base electrochemistry section above.
 
     U_sei: float = 0.4        # [V], provisional
     alpha_sei: float = 0.5    # [-]
@@ -137,7 +140,6 @@ class BatteryParameters:
     def get_b_s(self, geo: BatteryGeometry) -> float:
             return 0
 
-
 @dataclass
 class SimulationConfig:
 
@@ -151,9 +153,20 @@ class SimulationConfig:
     c_e_init: float = 1000.0
     T_init: float = 298.15
 
+
+    # Optional callable for time-varying current protocols (drive cycles, CC-CV, etc.)
+    # Signature: i_app_func(t: float) -> float [A/m²]
+    # Коли none використовуємо rjycnfyne i_app
+    i_app_func: Union[Callable[[float], float], None] = field(default=None, repr=False)
+
     @property
     def I_app(self) -> float:
         return self.i_app * self.A_cell
+
+    def get_i_app(self, t: float) -> float:
+            if self.i_app_func is not None:
+                return float(self.i_app_func(t))
+            return self.i_app
 
     def initial_solid_concentrations(self, param):
         return (
@@ -161,8 +174,10 @@ class SimulationConfig:
             self.theta_p_init * param.c_p_max
         )
 
+    #!!!!!!!!!!!!!!! Temporary !!!!!!!!!!!!!!!!!!!
     def OCV_n(self, theta):
-        raise NotImplementedError("OCV_n is not defined")
-
+        return 0.10 + 0.20 * (1.0 - theta)
     def OCV_p(self, theta):
-        raise NotImplementedError("OCV_p is not defined")
+        return 4.10 - 0.60 * theta
+
+    

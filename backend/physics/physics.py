@@ -60,7 +60,7 @@ class SolidDiffusion:
         else:
             raise ValueError("Unknown electrode")
 
-    def compute_derivatives(
+    '''def compute_derivatives(
         self,
         c_s: np.ndarray,
         T: float,
@@ -112,7 +112,76 @@ class SolidDiffusion:
             - (2 / self.Rk) * surface_flux
         )
 
+        return dc_s_dt'''
+
+    def compute_derivatives(
+        self,
+        c_s: np.ndarray,
+        T: float,
+        j_sei: float = 0.0
+    ) -> np.ndarray:
+
+        p = self.param
+        N = len(c_s)
+
+        # Temperature-dependent diffusion coefficient
+        Dk = self.D_ref * np.exp(
+            -self.Ea / p.R
+            * (1.0 / T - 1.0 / p.T_ref)
+        )
+
+        # Uniform finite-volume grid
+        dr = self.Rk / N
+        r_faces = np.linspace(0.0, self.Rk, N + 1)
+
+        # Spherical shell volumes, excluding 4*pi
+        volumes = np.diff(r_faces**3) / 3.0
+
+        # Radially weighted molar flux: r^2 * J
+        flux_faces = np.zeros(N + 1)
+
+        # Internal diffusion fluxes
+        flux_faces[1:-1] = (
+            -Dk * r_faces[1:-1]**2
+            * np.diff(c_s) / dr
+        )
+
+        # Zero flux at the particle center
+        flux_faces[0] = 0.0
+
+        # Surface intercalation current density [A/m^2]
+        j_int = self.compute_jk(j_sei)
+
+        # Surface boundary condition
+        flux_faces[-1] = (
+            self.Rk**2 * j_int / p.F
+        )
+
+        # Conservative finite-volume balance
+        dc_s_dt = -np.diff(flux_faces) / volumes
+
         return dc_s_dt
+
+    '''def get_c_surf(
+            self,
+            D_ref: float,
+            Ea: float,
+            c_s: np.ndarray,
+            T: float,
+            j_sei: float = 0.0,
+        ) -> float:
+        
+            Dk = D_ref * np.exp(
+                -Ea / self.R
+                * (1.0 / T - 1.0 / self.T_ref)
+                )
+                
+            dr = self.Rk / len(c_s)
+        
+            j_int = self.compute_jk(j_sei)
+        
+            return c_s[-1] - dr * j_int / (2.0 * Dk * self.param.F)'''
+
 
 class ElectrolyteDiffusionSPMe:
 
@@ -153,14 +222,14 @@ class ElectrolyteDiffusionSPMe:
         # Molar interfacial flux [mol/(m² s)]
         j_n = np.full(
             geo.N_x_n,
-            i_app / (geo.L_n * param.F * param.get_b_n(geo))
+            i_app / (geo.L_n * param.F * self.b_x[0])
         )
 
         j_s = np.zeros(geo.N_x_s)
 
         j_p = np.full(
             geo.N_x_p,
-            -i_app / (geo.L_p * param.F * param.get_b_p(geo))
+            -i_app / (geo.L_p * param.F * self.b_x[-1])
         )
 
         return np.concatenate([j_n, j_s, j_p])
@@ -204,10 +273,14 @@ class ElectrolyteDiffusionSPMe:
 class TerminalVoltage:
     def __init__(self, geo, param, sim):
         self.param, self.geo, self.sim = param, geo, sim
+        # Save active surface densities
+        self._b_n = param.get_b_n(geo)
+        self._b_p = param.get_b_p(geo)
 
-    def Ueq(self, c_s_n, c_s_p):
+    def Ueq(self, c_s_n, c_s_p, T, j_sei):
         param = self.param
         sim = self.sim
+        #!!!!!!!!!!!!!!!!!!!!!
         th_n = c_s_n[-1] / param.c_n_max
         th_p = c_s_p[-1] / param.c_p_max
         return sim.OCV_p(th_p) - sim.OCV_n(th_n)
@@ -226,19 +299,13 @@ class TerminalVoltage:
         sim = self.sim
         
         # Total negative electrode current density [A/m²]
-        j_tot_n = (
-            sim.i_app
-            / (param.get_b_n(geo) * geo.L_n)
-            )
+        j_tot_n = sim.i_app / (self._b_n * geo.L_n)
         
         # Intercalation current density [A/m²]
         j_n = j_tot_n - j_sei
         
         # Positive electrode current density [A/m²]
-        j_p = (
-            -sim.i_app
-            / (param.get_b_p(geo) * geo.L_p)
-        )
+        j_p = -sim.i_app / (self._b_p * geo.L_p)
 
         # Exchange current densities [A/m²]
         j_n0 = self.compute_j0_x(
@@ -278,17 +345,11 @@ class TerminalVoltage:
             self.geo.L_p / self.param.sigma_p + self.geo.L_n / self.param.sigma_n)
 
     def dphi_f(self, L_sei: float) -> float:
-        p = self.param
-        geo = self.geo
-        sim = self.sim
-        
-        a_n = p.get_b_n(geo)
-        
-        # Film resistance contribution [V]
+
         return (
-            sim.i_app * L_sei
-            / (geo.L_n * a_n * p.sigma_sei)
-            )
+            self.sim.i_app * L_sei
+            / (self.geo.L_n * self._b_n * self.param.sigma_sei)
+        )
 
 
     def calculate(
@@ -302,7 +363,7 @@ class TerminalVoltage:
     ):
 
         U = (
-            self.Ueq(c_s_n, c_s_p)
+            self.Ueq(c_s_n, c_s_p, T, j_sei)
             - self.eta_r(c_e, c_s_n, c_s_p, T, j_sei)
             - self.eta_c(c_e, T)
             - self.dphi_e()
@@ -369,27 +430,29 @@ class ThermalModel:
             * (T - p.T_amb)
         )
 
-    def compute_derivatives(self, T: float, Ueq: float, U: float, I: float, c_s_n: np.ndarray, c_s_p: np.ndarray) -> float:
+    def compute_derivatives(self, T: float, Ueq: float, U: float, I: float, c_s_n: np.ndarray, c_s_p: np.ndarray, j_sei) -> float:
 
         p = self.param
 
         # Electrode surface stoichiometries
+        #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         theta_n = c_s_n[-1] / p.c_n_max
         theta_p = c_s_p[-1] / p.c_p_max
 
         # Full-cell entropic coefficient [V/K]
-        '''dUeq_dT = (
+        if (self.theta_n_data is None or self.dUn_dT_data is None
+                or self.theta_p_data is None or self.dUp_dT_data is None):
+            raise ValueError(
+                "Add entropy coefficient tables, before using include_reversible_heat=True!"
+            )
+        dUeq_dT = (
             self.dOCV_p_dT(theta_p)
             - self.dOCV_n_dT(theta_n)
-        )'''
-        dUeq_dT = 0
+        )
 
         # Heat generation [W]
         Q_irr = self.compute_Q_irr(I, Ueq, U)
-
-        Q_rev = self.compute_Q_rev(
-            I, T, dUeq_dT
-        )
+        Q_rev = self.compute_Q_rev(I, T, dUeq_dT)
 
         # Cooling [W]
         Q_cooling = self.compute_Q_cooling(T)
@@ -398,9 +461,7 @@ class ThermalModel:
         C_thermal = p.mass * p.Cp
 
         # Temperature derivative [K/s]
-        dT_dt = (
-            Q_irr + Q_rev - Q_cooling
-        ) / C_thermal
+        dT_dt = (Q_irr + Q_rev - Q_cooling) / C_thermal
 
         return float(dT_dt)
 
