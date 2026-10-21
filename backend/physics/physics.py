@@ -60,59 +60,6 @@ class SolidDiffusion:
         else:
             raise ValueError("Unknown electrode")
 
-    '''def compute_derivatives(
-        self,
-        c_s: np.ndarray,
-        T: float,
-        j_sei: float = 0.0
-    ) -> np.ndarray:
-
-        param = self.param
-
-        dc_s_dt = np.zeros_like(c_s)
-
-        dr = self.r[1] - self.r[0]
-
-        # Temperature-dependent diffusion coefficient
-        Dk = self.D_ref * np.exp(
-            -(self.Ea / param.R)
-            * (1.0 / T - 1.0 / 298.15)
-        )
-
-        # Interior nodes
-        d2c_dr2 = (
-            c_s[2:] - 2 * c_s[1:-1] + c_s[:-2]
-        ) / dr**2
-
-        dc_dr = (
-            c_s[2:] - c_s[:-2]
-        ) / (2 * dr)
-
-        dc_s_dt[1:-1] = Dk * (
-            d2c_dr2
-            + (2 / self.r[1:-1]) * dc_dr
-        )
-
-        # Center boundary condition
-        dc_s_dt[0] = (
-            6 * Dk * (c_s[1] - c_s[0]) / dr**2
-        )
-
-        # Intercalation current density [A/m²]
-        j_int = self.compute_jk(j_sei)
-
-        # Molar surface flux [mol/(m² s)]
-        surface_flux = j_int / param.F
-
-        # Surface boundary condition
-        dc_s_dt[-1] = (
-            (2 * Dk / dr**2)
-            * (c_s[-2] - c_s[-1])
-            - (2 / dr) * surface_flux
-            - (2 / self.Rk) * surface_flux
-        )
-
-        return dc_s_dt'''
 
     def compute_derivatives(
         self,
@@ -161,27 +108,6 @@ class SolidDiffusion:
         dc_s_dt = -np.diff(flux_faces) / volumes
 
         return dc_s_dt
-
-    '''def get_c_surf(
-            self,
-            D_ref: float,
-            Ea: float,
-            c_s: np.ndarray,
-            T: float,
-            j_sei: float = 0.0,
-        ) -> float:
-        
-            Dk = D_ref * np.exp(
-                -Ea / self.R
-                * (1.0 / T - 1.0 / self.T_ref)
-                )
-                
-            dr = self.Rk / len(c_s)
-        
-            j_int = self.compute_jk(j_sei)
-        
-            return c_s[-1] - dr * j_int / (2.0 * Dk * self.param.F)'''
-
 
 class ElectrolyteDiffusionSPMe:
 
@@ -277,7 +203,7 @@ class TerminalVoltage:
         self._b_n = param.get_b_n(geo)
         self._b_p = param.get_b_p(geo)
 
-    def Ueq(self, c_s_n, c_s_p, T, j_sei):
+    def Ueq(self, c_s_n, c_s_p):
         param = self.param
         sim = self.sim
         #!!!!!!!!!!!!!!!!!!!!!
@@ -352,18 +278,10 @@ class TerminalVoltage:
         )
 
 
-    def calculate(
-        self,
-        c_s_n,
-        c_s_p,
-        c_e,
-        T,
-        L_sei,
-        j_sei=0.0
-    ):
+    def calculate(self, c_s_n, c_s_p, c_e, T, L_sei, j_sei=0.0):
 
         U = (
-            self.Ueq(c_s_n, c_s_p, T, j_sei)
+            self.Ueq(c_s_n, c_s_p)
             - self.eta_r(c_e, c_s_n, c_s_p, T, j_sei)
             - self.eta_c(c_e, T)
             - self.dphi_e()
@@ -435,7 +353,6 @@ class ThermalModel:
         p = self.param
 
         # Electrode surface stoichiometries
-        #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         theta_n = c_s_n[-1] / p.c_n_max
         theta_p = c_s_p[-1] / p.c_p_max
 

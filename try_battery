@@ -1,7 +1,4 @@
 import numpy as np
-
-"""No real data, just test to see whether it works"""
-
 import matplotlib.pyplot as plt
 
 from backend.physics.config import BatteryGeometry, BatteryParameters, SimulationConfig
@@ -12,77 +9,53 @@ param = BatteryParameters()
 sim = SimulationConfig()
 
 model = BatterySimulation(
-    geo, param, sim,
+    geo,
+    param,
+    sim,
     enable_sei=True,
-    enable_thermal=True,
+    enable_thermal=False
 )
 
-solution = model.run(sim.t_final, num_points=101)
-d = model.diagnostics(solution)
+# 50 cycles
 
-print(f"ODE states: {solution.y.shape[0]}")
-print(f"Initial V: {d['voltage_V'][0]:.4f} V")
-print(f"Final V: {d['voltage_V'][-1]:.4f} V")
-print(f"Final temperature: {d['temperature_K'][-1]:.2f} K")
-print(f"SEI thickness: {d['sei_thickness_m'][-1] * 1e9:.5f} nm")
-print(f"Li loss: {d['capacity_loss_Ah'][-1]:.6e} Ah")
+data = model.run_cycles(
+    n_cycles=50,
+    charge_time=3600.0,
+    discharge_time=3600.0,
+    current_density=2.5
+)
 
-def check_lithium_balance(sol, model):
-    g = model.geo
-    p = model.param
-    s = model.sim
+print("Final voltage:", data["voltage_V"][-1])
+print("Final SEI thickness [nm]:", data["sei_thickness_m"][-1] * 1e9)
+print("Lithium loss [Ah]:", data["capacity_loss_Ah"][-1])
 
-    # Volume weights for spherical particle shells
-    def sphere_weights(R, N):
-        faces = np.linspace(0.0, R, N + 1)
-        return np.diff(faces**3) / R**3
+def plot_cycling_results(data):
 
-    w_n = sphere_weights(g.R_n, g.N_r_n)
-    w_p = sphere_weights(g.R_p, g.N_r_p)
+    time_h = data["time_s"] / 3600.0
 
-    # Volume-averaged solid concentrations [mol/m^3]
-    c_n_avg = w_n @ sol.y[model.s_n, :]
-    c_p_avg = w_p @ sol.y[model.s_p, :]
-
-    # Lithium inventory in each electrode [C]
-    Q_n = (
-        p.F * s.A_cell * g.L_n
-        * (1.0 - g.eps_n) * c_n_avg
+    # Voltage
+    fig, ax = plt.subplots(figsize=(11, 5))
+    ax.plot(time_h, data["voltage_V"])
+    ax.set(
+        xlabel="Time [h]",
+        ylabel="Voltage [V]",
+        title="Charge-discharge cycling"
     )
+    ax.grid(True)
 
-    Q_p = (
-        p.F * s.A_cell * g.L_p
-        * (1.0 - g.eps_p) * c_p_avg
+    # SEI growth
+    fig, ax = plt.subplots(figsize=(11, 5))
+    ax.plot(
+        time_h,
+        data["sei_thickness_m"] * 1e9
     )
+    ax.set(
+        xlabel="Time [h]",
+        ylabel="SEI thickness [nm]",
+        title="SEI growth during cycling"
+    )
+    ax.grid(True)
 
-    # Cumulative lithium loss due to SEI [C]
-    Q_loss = sol.y[model.i_Q, :]
+    plt.show()
 
-    # Conservation: Q_n + Q_p + Q_loss = constant
-    Q_total = Q_n + Q_p + Q_loss
-    error = Q_total - Q_total[0]
-
-    print("Anode lithium change [C]:",
-          Q_n[-1] - Q_n[0])
-
-    print("Cathode lithium change [C]:",
-          Q_p[-1] - Q_p[0])
-
-    print("SEI lithium loss [C]:",
-          Q_loss[-1] - Q_loss[0])
-
-    print("Final balance error [C]:", error[-1])
-    print("Maximum absolute error [C]:",
-          np.max(np.abs(error)))
-
-    return error
-
-balance_error = check_lithium_balance(solution, model)
-
-plt.figure()
-plt.plot(d["time_s"], d["voltage_V"])
-plt.xlabel("Time [s]")
-plt.ylabel("Terminal voltage [V]")
-plt.grid(True)
-plt.tight_layout()
-plt.show()
+plot_cycling_results(data)

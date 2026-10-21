@@ -143,7 +143,8 @@ class BatteryParameters:
 @dataclass
 class SimulationConfig:
 
-    i_app: float = 2.5       # [A/m²]
+    i_app: float = -2.5       # [A/m²]
+    i_app_func = None
     A_cell: float = 0.01     # [m²]
     t_final: float = 3600.0
 
