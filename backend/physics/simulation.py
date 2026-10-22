@@ -99,6 +99,7 @@ class BatterySimulation:
             L_sei=L_sei,
         )
 
+
     def _temperature_derivative(
         self, c_s_n, c_s_p, c_e, T, L_sei, j_sei
     ):
@@ -165,15 +166,47 @@ class BatterySimulation:
             
         return dy
 
-    def _integrate_interval(self, t_start, t_end, y0, num_points):
+    def _terminal_voltage(self, y):
 
+        c_s_n, c_s_p, c_e, T, L_sei, _ = self._unpack(y)
+
+        j_sei, _ = self._sei_current(
+            c_s_n, c_e, T, L_sei
+        )
+
+        return float(self.voltage.calculate(
+            c_s_n, c_s_p, c_e, T,
+            L_sei if self.enable_sei else 0.0,
+            j_sei,
+        ))
+
+    def _integrate_interval(
+        self,
+        t_start,
+        t_end,
+        y0,
+        num_points,
+        voltage_cutoff=None,
+        direction=0,
+    ):
         if t_end <= t_start:
-            raise ValueError("t_end must be greater than t_start")
+            raise ValueError("Invalid time interval")
 
         if num_points < 2:
             raise ValueError("num_points must be >= 2")
 
         times = np.linspace(t_start, t_end, num_points)
+
+        event = None
+
+        if voltage_cutoff is not None:
+
+            def voltage_event(t, y):
+                return self._terminal_voltage(y) - voltage_cutoff
+
+            voltage_event.terminal = True
+            voltage_event.direction = direction
+            event = voltage_event
 
         sol = solve_ivp(
             self._rhs,
@@ -181,15 +214,35 @@ class BatterySimulation:
             y0,
             method="BDF",
             t_eval=times,
+            events=event,
             rtol=1e-6,
             atol=self.atol,
             max_step=60.0,
         )
 
         if not sol.success:
-            raise RuntimeError(
-                f"Battery integration failed: {sol.message}"
-            )
+            raise RuntimeError(sol.message)
+
+        if voltage_cutoff is not None:
+            if sol.t_events[0].size == 0:
+                raise RuntimeError(
+                    f"Voltage cutoff {voltage_cutoff} V "
+                    f"was not reached before t={t_end:.1f} s"
+                )
+
+            # The event may occur between output points.
+            # Preserve its exact time and state.
+            t_hit = float(sol.t_events[0][-1])
+            y_hit = sol.y_events[0][-1].copy()
+
+            if not np.isclose(
+            sol.t[-1], t_hit, atol=1e-9, rtol=0.0
+            ):
+                sol.t = np.append(sol.t, t_hit)
+                sol.y = np.column_stack((sol.y, y_hit))
+            else:
+                sol.t[-1] = t_hit
+                sol.y[:, -1] = y_hit
 
         return sol
 
@@ -241,58 +294,74 @@ class BatterySimulation:
         discharge_time=3600.0,
         current_density=2.5,
         points_per_phase=61,
+        V_max=3.65,
+        V_min=3.59,
     ):
-        """Run repeated constant-current charge/discharge cycles."""
+        """Cycle with voltage cutoffs and measure capacity."""
 
-        if n_cycles < 1:
-            raise ValueError("n_cycles must be positive")
-
-        if current_density <= 0:
-            raise ValueError("current_density must be positive")
+        if n_cycles < 1 or current_density <= 0:
+            raise ValueError("Invalid cycling parameters")
 
         if charge_time <= 0 or discharge_time <= 0:
-            raise ValueError("Phase durations must be positive")
+            raise ValueError("Phase limits must be positive")
 
         if points_per_phase < 2:
             raise ValueError("points_per_phase must be >= 2")
 
-        if self.sim.i_app_func is not None:
-            raise ValueError("Set sim.i_app_func = None before cycling")
+        if V_min >= V_max:
+            raise ValueError("V_min must be below V_max")
 
-        # Initialize only once
+        if self.sim.i_app_func is not None:
+            raise ValueError("Set sim.i_app_func = None")
+
         y = self.initial_state()
         t = 0.0
 
-        # Store the results of individual phases
         results = []
-
+        discharge_capacities = []
         original_current = self.sim.i_app
 
         try:
             for cycle in range(1, n_cycles + 1):
 
                 phases = [
-                    ("charge", -current_density, charge_time),
-                    ("discharge", current_density, discharge_time),
-                ]   
+                    ("charge", -current_density,
+                    charge_time, V_max, +1),
+                    ("discharge", current_density,
+                    discharge_time, V_min, -1),
+                ]
 
-                for phase, current, duration in phases:
+                for phase, current, max_duration, cutoff, direction in phases:
 
                     self.sim.i_app = current
-                    t_end = t + duration
 
-                    # Integrate one phase
+                    V_start = self._terminal_voltage(y)
+
+                    if direction > 0 and V_start >= cutoff:
+                        raise RuntimeError(
+                            f"Cycle {cycle}: charge starts "
+                            f"at {V_start:.4f} V >= {cutoff} V"
+                        )
+
+                    if direction < 0 and V_start <= cutoff:
+                        raise RuntimeError(
+                            f"Cycle {cycle}: discharge starts "
+                            f"at {V_start:.4f} V <= {cutoff} V"
+                        )
+
                     sol = self._integrate_interval(
                         t_start=t,
-                        t_end=t_end,
+                        t_end=t + max_duration,
                         y0=y,
                         num_points=points_per_phase,
+                        voltage_cutoff=cutoff,
+                        direction=direction,
                     )
 
-                    # Calculate phase diagnostics
+                    actual_duration = float(sol.t[-1] - t)
+
                     diag = self.diagnostics(sol)
 
-                    # Add information about the phase
                     diag["current_A_m2"] = np.full(
                         sol.t.size, current
                     )
@@ -305,17 +374,38 @@ class BatterySimulation:
 
                     results.append(diag)
 
-                    # Continue from the previous final state
+                    if phase == "discharge":
+                        Q_dis = (
+                            current
+                            * self.sim.A_cell
+                            * actual_duration
+                            / 3600.0
+                        )
+                        discharge_capacities.append(Q_dis)
+
                     y = sol.y[:, -1].copy()
-                    t = t_end
+                    t = float(sol.t[-1])
 
         finally:
             self.sim.i_app = original_current
 
-        # Combine phase results into continuous arrays
-        return {
-            key: np.concatenate(
-                [result[key] for result in results]
-            )
+        capacities = np.array(discharge_capacities)
+        Q_reference = capacities[0]
+
+        SOH = 100.0 * capacities / Q_reference
+        capacity_fade = 100.0 - SOH
+
+        output = {
+            key: np.concatenate([r[key] for r in results])
             for key in results[0]
         }
+
+        # One measurement per cycle, not per time point.
+        output["cycle_summary"] = {
+            "cycle": np.arange(1, n_cycles + 1),
+            "discharge_capacity_Ah": capacities,
+            "SOH_percent": SOH,
+            "capacity_fade_percent": capacity_fade,
+        }
+
+        return output

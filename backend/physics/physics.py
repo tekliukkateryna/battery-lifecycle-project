@@ -211,6 +211,8 @@ class TerminalVoltage:
         th_p = c_s_p[-1] / param.c_p_max
         return sim.OCV_p(th_p) - sim.OCV_n(th_n)
 
+
+    # check!!!!!!!!!!!!!!!!!!
     def compute_j0_x(self, c_e_slice, c_k_surf, K_k, c_k_max):
 
         param = self.param

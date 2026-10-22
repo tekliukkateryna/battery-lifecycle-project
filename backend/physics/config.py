@@ -154,6 +154,9 @@ class SimulationConfig:
     c_e_init: float = 1000.0
     T_init: float = 298.15
 
+   # Треба узгодити з OCV curves
+    lower_cut_off_V: float = 2.5
+    upper_cut_off_V: float = 4.2
 
     # Optional callable for time-varying current protocols (drive cycles, CC-CV, etc.)
     # Signature: i_app_func(t: float) -> float [A/m²]

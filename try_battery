@@ -16,46 +16,28 @@ model = BatterySimulation(
     enable_thermal=False
 )
 
-# 50 cycles
+# 100 cycles
 
 data = model.run_cycles(
-    n_cycles=50,
-    charge_time=3600.0,
-    discharge_time=3600.0,
-    current_density=2.5
+    n_cycles = 100,
+    charge_time = 3600.0,
+    discharge_time = 3600.0,
+    current_density = 2.5,
+    V_max=3.65,
+    V_min=3.59,
 )
 
-print("Final voltage:", data["voltage_V"][-1])
-print("Final SEI thickness [nm]:", data["sei_thickness_m"][-1] * 1e9)
-print("Lithium loss [Ah]:", data["capacity_loss_Ah"][-1])
+summary = data["cycle_summary"]
 
-def plot_cycling_results(data):
+plt.figure(figsize=(9, 5))
 
-    time_h = data["time_s"] / 3600.0
+plt.plot(
+    summary["cycle"],
+    summary["SOH_percent"],
+)
 
-    # Voltage
-    fig, ax = plt.subplots(figsize=(11, 5))
-    ax.plot(time_h, data["voltage_V"])
-    ax.set(
-        xlabel="Time [h]",
-        ylabel="Voltage [V]",
-        title="Charge-discharge cycling"
-    )
-    ax.grid(True)
-
-    # SEI growth
-    fig, ax = plt.subplots(figsize=(11, 5))
-    ax.plot(
-        time_h,
-        data["sei_thickness_m"] * 1e9
-    )
-    ax.set(
-        xlabel="Time [h]",
-        ylabel="SEI thickness [nm]",
-        title="SEI growth during cycling"
-    )
-    ax.grid(True)
-
-    plt.show()
-
-plot_cycling_results(data)
+plt.xlabel("Cycle number")
+plt.ylabel("Relative SOH [%]")
+plt.title("Capacity retention during cycling")
+plt.grid(True)
+plt.show()
