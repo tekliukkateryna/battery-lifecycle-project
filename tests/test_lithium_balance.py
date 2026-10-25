@@ -46,10 +46,10 @@ def calculate_lithium_balance(sol, model):
 @pytest.mark.parametrize(
     "current, enable_sei",
     [
-        (2.5, False),
-        (-2.5, False),
-        (2.5, True),
-        (-2.5, True),
+        (0.25, False),
+        (-0.25, False),
+        (0.25, True),
+        (-0.25, True),
     ]
 )
 def test_lithium_conservation(current, enable_sei):
@@ -58,8 +58,8 @@ def test_lithium_conservation(current, enable_sei):
     param = BatteryParameters()
     sim = SimulationConfig()
 
-    sim.i_app = current
-    sim.i_app_func = None
+    sim.I_app = current
+
 
     model = BatterySimulation(
         geo,

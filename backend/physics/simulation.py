@@ -110,13 +110,9 @@ class BatterySimulation:
 
         L_film = L_sei if self.enable_sei else 0.0
 
-        Ueq = self.voltage.Ueq(
-            c_s_n, c_s_p, T, j_sei
-        )
+        Ueq = self.voltage.Ueq(c_s_n, c_s_p)
 
-        V = self.voltage.calculate(
-            c_s_n, c_s_p, c_e, T, L_film, j_sei
-        )
+        V = self.voltage.calculate(c_s_n, c_s_p, c_e, T, L_film, j_sei)
 
         I_app = self.sim.i_app * self.sim.A_cell
 
@@ -126,9 +122,7 @@ class BatterySimulation:
                 c_s_n, c_s_p, j_sei
             )
 
-        Q_irr = self.thermal.compute_Q_irr(
-            I_app, Ueq, V
-        )
+        Q_irr = self.thermal.compute_Q_irr(I_app, Ueq, V)
 
         Q_cool = self.thermal.compute_Q_cooling(T)
 
@@ -140,7 +134,7 @@ class BatterySimulation:
     # права частина системи диференціальних рівнянь (тобто похідних)
     def _rhs(self, t, y):
 
-        self.sim.i_app = self.sim.get_i_app(t)
+        self.sim.I_app = self.sim.get_I_app(t)
 
         c_s_n, c_s_p, c_e, T, L_sei, _ = self._unpack(y)
 
@@ -292,11 +286,21 @@ class BatterySimulation:
         n_cycles=1,
         charge_time=3600.0,
         discharge_time=3600.0,
-        current_density=2.5,
+        current_density=None,
         points_per_phase=61,
-        V_max=3.65,
-        V_min=3.59,
+        V_max=None,
+        V_min=None,
     ):
+
+        if current_density is None:
+            current_density = self.sim.I_app
+
+        if V_max is None:
+            V_max = self.sim.upper_cut_off_V
+
+        if V_min is None:
+            V_min = self.sim.lower_cut_off_V
+        
         """Cycle with voltage cutoffs and measure capacity."""
 
         if n_cycles < 1 or current_density <= 0:
@@ -311,15 +315,15 @@ class BatterySimulation:
         if V_min >= V_max:
             raise ValueError("V_min must be below V_max")
 
-        if self.sim.i_app_func is not None:
-            raise ValueError("Set sim.i_app_func = None")
+        if self.sim.I_app_func is not None:
+            raise ValueError("Set sim.I_app_func = None")
 
         y = self.initial_state()
         t = 0.0
 
         results = []
         discharge_capacities = []
-        original_current = self.sim.i_app
+        original_current = self.sim.I_app
 
         try:
             for cycle in range(1, n_cycles + 1):
@@ -333,7 +337,7 @@ class BatterySimulation:
 
                 for phase, current, max_duration, cutoff, direction in phases:
 
-                    self.sim.i_app = current
+                    self.sim.I_app = current
 
                     V_start = self._terminal_voltage(y)
 
@@ -387,7 +391,7 @@ class BatterySimulation:
                     t = float(sol.t[-1])
 
         finally:
-            self.sim.i_app = original_current
+            self.sim.I_app = original_current
 
         capacities = np.array(discharge_capacities)
         Q_reference = capacities[0]

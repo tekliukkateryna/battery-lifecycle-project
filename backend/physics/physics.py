@@ -279,8 +279,7 @@ class TerminalVoltage:
             / (self.geo.L_n * self._b_n * self.param.sigma_sei)
         )
 
-
-    def calculate(self, c_s_n, c_s_p, c_e, T, L_sei, j_sei=0.0):
+    def calculate(self, c_s_n, c_s_p, c_e, T, L_sei, j_sei=0):
 
         U = (
             self.Ueq(c_s_n, c_s_p)
@@ -310,6 +309,7 @@ class ThermalModel:
 
     def dOCV_n_dT(self, theta_n):
         if self.theta_n_data is None or self.dUn_dT_data is None:
+
             raise ValueError(
                 "Negative electrode entropy data are not defined"
             )
@@ -321,6 +321,7 @@ class ThermalModel:
         )
 
     def dOCV_p_dT(self, theta_p):
+
         if self.theta_p_data is None or self.dUp_dT_data is None:
             raise ValueError(
                 "Positive electrode entropy data are not defined"

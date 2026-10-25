@@ -16,7 +16,7 @@ def test_charge_discharge_cycles():
     param = BatteryParameters()
     sim = SimulationConfig()
 
-    sim.i_app_func = None
+
 
     model = BatterySimulation(
         geo,
@@ -26,14 +26,14 @@ def test_charge_discharge_cycles():
         enable_thermal=False,
     )
 
-    V_max = 3.65
-    V_min = 3.59
-    current_density = 2.5
+    V_max = 4.3
+    V_min = 3.0
+    current_density = 0.5
 
     data = model.run_cycles(
         n_cycles=2,
-        charge_time=3600.0,
-        discharge_time=3600.0,
+        charge_time=7200.0,
+        discharge_time=7200.0,
         current_density=current_density,
         V_max=V_max,
         V_min=V_min,
@@ -45,7 +45,7 @@ def test_charge_discharge_cycles():
     assert np.all(np.isfinite(data["capacity_loss_Ah"]))
 
     # 2. Total duration must not exceed 4 hours
-    assert 0 < data["time_s"][-1] <= 14400.0 + 1e-6
+    assert 0 < data["time_s"][-1] <= 28800.0 + 1e-6
 
     # 3. Time must be non-decreasing
     assert np.all(np.diff(data["time_s"]) >= -1e-9)
@@ -72,7 +72,7 @@ def test_charge_discharge_cycles():
 
             duration = times[-1] - times[0]
 
-            assert 0 < duration <= 3600.0 + 1e-6
+            assert 0 < duration <= 7200.0 + 1e-6
 
             assert voltages[-1] == pytest.approx(
                 cutoff, abs=1e-4
