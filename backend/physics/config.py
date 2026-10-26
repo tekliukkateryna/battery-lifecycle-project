@@ -32,8 +32,11 @@ class BatteryGeometry:
 
     # Porosity (volume fraction of liquid electrolyte)
     eps_n: float = 0.3
-    eps_s: float = 0.4
+    eps_s: float = 1.0
     eps_p: float = 0.3
+    
+    eps_active_n: float = 0.6
+    eps_active_p: float = 0.5
 
     # Bruggemann's coefficients
     brug: float = 1.5
@@ -78,14 +81,15 @@ class BatteryParameters:
     F: float = 96485.33
     R: float = 8.31446
 
+    # Check !!!!!!!!!!!!!!!!!!!!!!!!!!!!
     # Kinetic coefficients converted to BV
-    K_n: float = 8.19e-5
-    K_p: float = 5.03e-6
+    K_n: float = 1.63764e-4       # 8.19e-5
+    K_p: float = 1.00719e-5      # 5.03e-6
 
     # Reference diffusion coefficients
     D_s_n_ref: float = 3.9e-14
     D_s_p_ref: float = 1.0e-13
-    D_e_ref: float = 5.34e-10
+    D_e_ref: float = 2.788e-10
 
     # Conductivities [S/m]
     sigma_n: float = 100.0
@@ -95,30 +99,30 @@ class BatteryParameters:
     # Electrochemistry
     t_plus: float = 0.4
     c_n_max: float = 24983.26 # Graphite anode
-    c_p_max: float = 51217.93 # NMC cathode [mol/m^3]
+    c_p_max: float = 51217.93 # LiCoO2 (LCO) cathode
     c_e_0: float = 1000.0
 
     # Activation energy (Arrhenius) [J/mol]
-    Ea_Ds_n: float = 35000.0
-    Ea_Ds_p: float = 29000.0
-    Ea_De: float = 15000.0
-    Ea_sei: float = 38000.0
+    Ea_Ds_n: float = 42770.0
+    Ea_Ds_p: float = 18550.0
+    Ea_De: float = 37040.0
+    Ea_sei: float = 0
 
     # Thermal Parameters
     mass: float = 0.04
     Cp: float = 1100.0  # Heat Capacity [J/(kg·K)]
-    h_cool: float = 12.0  # Convection [W/(m²·K)]
-    A_surface: float = 0.05  # Cooling area [m²]
+    h_cool: float = 10.0  # Convection [W/(m²·K)]
+    A_surface: float = 0.0569  # Cooling area [m²]
     T_amb: float = 298.15  # Environment [K]
 
     # SEI Degradation Parameters
     k_sei_ref: float = 1e-12  # Reaction constant [m/s]
     M_sei: float = 0.162  # Molar mass [kg/mol]
     rho_sei: float = 2100.0  # Density [kg/m³]
-    L_sei_init: float = 5e-9  # SEI initial Thickness [m]
+    L_sei_init: float = 5e-09  # SEI initial Thickness [m]
     T_ref: float = 298.15       # [K]
 
-    D_sol_ref: float = 1.0e-21      # [m²/s]
+    D_sol_ref: float = 2.5e-22      # [m²/s]
     Ea_k_sei: float = 40000.0       # [J/mol]
     Ea_D_sol: float = 67000.0       # [J/mol]
     # Note: T_ref is shared with the base electrochemistry section above.
@@ -132,10 +136,10 @@ class BatteryParameters:
 
     # Dynamic calculations of specific geometries
     def get_b_n(self, geo: BatteryGeometry) -> float:
-        return 3.0 * (1.0 - geo.eps_n) / geo.R_n
+        return 3.0 * geo.eps_active_n / geo.R_n
 
     def get_b_p(self, geo: BatteryGeometry) -> float:
-        return 3.0 * (1.0 - geo.eps_p) / geo.R_p
+        return 3.0 * geo.eps_active_p / geo.R_p
 
     def get_b_s(self, geo: BatteryGeometry) -> float:
             return 0
@@ -143,15 +147,15 @@ class BatteryParameters:
 @dataclass
 class SimulationConfig:
 
-    I_app: float = 0.5       # [A/m²]
-    A_cell: float = 0.01     # [m²]
+    I_app: float = 0.680616           # [A]
+    A_cell: float = 0.137 * 0.207     # [m²]
     t_final: float = 3600.0
 
     theta_n_init: float = 0.8
     theta_p_init: float = 0.6
 
-    upper_cut_off_V: float = 4.1    #4.1     3.65
-    lower_cut_off_V: float = 3.105    #3.105   3.59
+    upper_cut_off_V: float = 4.1
+    lower_cut_off_V: float = 3.105
 
     c_e_init: float = 1000.0
     T_init: float = 298.15
@@ -162,7 +166,7 @@ class SimulationConfig:
     I_app_func: Union[Callable[[float], float], None] = field(default=None, repr=False)
 
     @property
-    def i_app(self) -> float:
+    def i_app(self) -> float:                # [A/m^2]
         return self.I_app / self.A_cell
 
     def get_I_app(self, t: float) -> float:

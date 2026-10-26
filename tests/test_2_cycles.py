@@ -26,7 +26,7 @@ def test_charge_discharge_cycles():
         enable_thermal=False,
     )
 
-    V_max = 4.3
+    V_max = 4.1
     V_min = 3.0
     current_density = 0.5
 

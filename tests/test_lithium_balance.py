@@ -30,12 +30,12 @@ def calculate_lithium_balance(sol, model):
 
     Q_n = (
         p.F * s.A_cell * g.L_n
-        * (1.0 - g.eps_n) * c_n_avg
+        * g.eps_active_n * c_n_avg
     )
 
     Q_p = (
         p.F * s.A_cell * g.L_p
-        * (1.0 - g.eps_p) * c_p_avg
+        * g.eps_active_p * c_p_avg
     )
 
     Q_loss = sol.y[model.i_Q, :]

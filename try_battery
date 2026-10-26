@@ -19,7 +19,7 @@ model = BatterySimulation(
 
 # 100 cycles
 data = model.run_cycles(
-    n_cycles = 100,
+    n_cycles = 1000,
     charge_time = 3600.0,
     discharge_time = 3600.0,
 )

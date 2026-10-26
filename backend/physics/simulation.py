@@ -286,14 +286,14 @@ class BatterySimulation:
         n_cycles=1,
         charge_time=3600.0,
         discharge_time=3600.0,
-        current_density=None,
+        current=None,
         points_per_phase=61,
         V_max=None,
         V_min=None,
     ):
 
-        if current_density is None:
-            current_density = self.sim.I_app
+        if current is None:
+            current = self.sim.I_app
 
         if V_max is None:
             V_max = self.sim.upper_cut_off_V
@@ -303,7 +303,7 @@ class BatterySimulation:
         
         """Cycle with voltage cutoffs and measure capacity."""
 
-        if n_cycles < 1 or current_density <= 0:
+        if n_cycles < 1 or current <= 0:
             raise ValueError("Invalid cycling parameters")
 
         if charge_time <= 0 or discharge_time <= 0:
@@ -329,9 +329,9 @@ class BatterySimulation:
             for cycle in range(1, n_cycles + 1):
 
                 phases = [
-                    ("charge", -current_density,
+                    ("charge", -current,
                     charge_time, V_max, +1),
-                    ("discharge", current_density,
+                    ("discharge", current,
                     discharge_time, V_min, -1),
                 ]
 
@@ -366,7 +366,7 @@ class BatterySimulation:
 
                     diag = self.diagnostics(sol)
 
-                    diag["current_A_m2"] = np.full(
+                    diag["current_A"] = np.full(
                         sol.t.size, current
                     )
                     diag["cycle"] = np.full(
