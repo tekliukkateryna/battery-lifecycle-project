@@ -40,12 +40,12 @@ class SolidDiffusion:
         self.b_k = b_k
         self.sign = sign
 
-    def compute_jk(self, j_sei=0.0):
+    def compute_jk(self, i_app, j_sei=0.0):
         p = self.param
 
         if self.electrode == "n":
             j_tot = (
-                self.sim.i_app
+                i_app
                 / (self.b_k * self.Lk)
             )
 
@@ -53,7 +53,7 @@ class SolidDiffusion:
 
         elif self.electrode == "p":
             return (
-                -self.sim.i_app
+                -i_app
                 / (self.b_k * self.Lk)
             )
 
@@ -61,12 +61,7 @@ class SolidDiffusion:
             raise ValueError("Unknown electrode")
 
 
-    def compute_derivatives(
-        self,
-        c_s: np.ndarray,
-        T: float,
-        j_sei: float = 0.0
-    ) -> np.ndarray:
+    def compute_derivatives(self, c_s: np.ndarray, i_app: float, T: float, j_sei: float = 0.0) -> np.ndarray:
 
         p = self.param
         N = len(c_s)
@@ -77,11 +72,9 @@ class SolidDiffusion:
             * (1.0 / T - 1.0 / p.T_ref)
         )
 
-        # Uniform finite-volume grid
         dr = self.Rk / N
         r_faces = np.linspace(0.0, self.Rk, N + 1)
 
-        # Spherical shell volumes, excluding 4*pi
         volumes = np.diff(r_faces**3) / 3.0
 
         # Radially weighted molar flux: r^2 * J
@@ -97,7 +90,7 @@ class SolidDiffusion:
         flux_faces[0] = 0.0
 
         # Surface intercalation current density [A/m^2]
-        j_int = self.compute_jk(j_sei)
+        j_int = self.compute_jk(i_app, j_sei)
 
         # Surface boundary condition
         flux_faces[-1] = (
@@ -160,7 +153,7 @@ class ElectrolyteDiffusionSPMe:
 
         return np.concatenate([j_n, j_s, j_p])
 
-    def compute_derivatives(self, c_e: np.ndarray, T: float) -> np.ndarray:
+    def compute_derivatives(self, c_e: np.ndarray, i_app: float, T: float) -> np.ndarray:
 
         geo = self.geo
         param = self.param
@@ -170,7 +163,7 @@ class ElectrolyteDiffusionSPMe:
             * (1 / T - 1 / 298.15)
         )
 
-        j_x = self.compute_j_x(self.sim.i_app)
+        j_x = self.compute_j_x(i_app)
 
         # Face diffusive flux, positive in +x direction
         J_faces = (
@@ -187,9 +180,7 @@ class ElectrolyteDiffusionSPMe:
         ) / geo.dx
 
         # Reaction source
-        source = (
-            (1 - param.t_plus) * self.b_x * j_x
-        )
+        source = ((1 - param.t_plus) * self.b_x * j_x)
 
         dc_e_dt = (diffusion + source) / self.eps
 
@@ -206,13 +197,10 @@ class TerminalVoltage:
     def Ueq(self, c_s_n, c_s_p):
         param = self.param
         sim = self.sim
-        #!!!!!!!!!!!!!!!!!!!!!
         th_n = c_s_n[-1] / param.c_n_max
         th_p = c_s_p[-1] / param.c_p_max
         return sim.OCV_p(th_p) - sim.OCV_n(th_n)
 
-
-    # check!!!!!!!!!!!!!!!!!!
     def compute_j0_x(self, c_e_slice, c_k_surf, K_k, c_k_max):
 
         param = self.param
@@ -220,20 +208,20 @@ class TerminalVoltage:
         radicand = ((c_e_slice / param.c_e_0) * (c_k_surf/c_k_max) * (1 - c_k_surf/c_k_max))
         return (param.F * K_k * np.sqrt(radicand)).mean()                     # dimensional form, [A/m²]
 
-    def eta_r(self, c_e, c_s_n, c_s_p, T, j_sei=0.0):
+    def eta_r(self, c_e, c_s_n, c_s_p, i_app, T, j_sei=0.0):
         
         geo = self.geo
         param = self.param
         sim = self.sim
         
         # Total negative electrode current density [A/m²]
-        j_tot_n = sim.i_app / (self._b_n * geo.L_n)
+        j_tot_n = i_app / (self._b_n * geo.L_n)
         
         # Intercalation current density [A/m²]
         j_n = j_tot_n - j_sei
         
         # Positive electrode current density [A/m²]
-        j_p = -sim.i_app / (self._b_p * geo.L_p)
+        j_p = -i_app / (self._b_p * geo.L_p)
 
         # Exchange current densities [A/m²]
         j_n0 = self.compute_j0_x(
@@ -263,75 +251,42 @@ class TerminalVoltage:
         return (1 - p.t_plus) * 2 * p.R * T / (p.F * p.c_e_0) * (
             c_e[:g.N_x_n].mean() - c_e[g.N_x_n + g.N_x_s:].mean())
 
-    def dphi_e(self): 
+    def dphi_e(self, i_app): 
         
-        return self.sim.i_app / self.param.sigma_e * (
+        return i_app / self.param.sigma_e * (
             self.geo.L_n / (3 * self.geo.B_n) + self.geo.L_s / self.geo.B_s + self.geo.L_p / (3 * self.geo.B_p))
     
-    def dphi_s(self): 
-        return self.sim.i_app / 3 * (
+    def dphi_s(self, i_app): 
+        return i_app / 3 * (
             self.geo.L_p / self.param.sigma_p + self.geo.L_n / self.param.sigma_n)
 
-    def dphi_f(self, L_sei: float) -> float:
+    def dphi_f(self, i_app, L_sei: float) -> float:
 
         return (
-            self.sim.i_app * L_sei
+            i_app * L_sei
             / (self.geo.L_n * self._b_n * self.param.sigma_sei)
         )
 
-    def calculate(self, c_s_n, c_s_p, c_e, T, L_sei, j_sei=0):
+    def calculate(self, c_s_n, c_s_p, c_e, i_app, T, L_sei, j_sei=0):
 
         U = (
             self.Ueq(c_s_n, c_s_p)
-            - self.eta_r(c_e, c_s_n, c_s_p, T, j_sei)
+            - self.eta_r(c_e, c_s_n, c_s_p, i_app, T, j_sei)
             - self.eta_c(c_e, T)
-            - self.dphi_e()
-            - self.dphi_s()
-            - self.dphi_f(L_sei)
+            - self.dphi_e(i_app)
+            - self.dphi_s(i_app)
+            - self.dphi_f(i_app, L_sei)
         )
 
         return U
 
 class ThermalModel:
 
-    def __init__(self, param: BatteryParameters, sim: SimulationConfig):
+    def __init__(self, geo: BatteryGeometry, param: BatteryParameters, sim: SimulationConfig):
 
+        self.geo = geo
         self.param = param
         self.sim = sim
-
-        # Experimental entropy coefficient tables
-        # To be populated from literature data
-        self.theta_n_data = None
-        self.dUn_dT_data = None
-
-        self.theta_p_data = None
-        self.dUp_dT_data = None
-
-    def dOCV_n_dT(self, theta_n):
-        if self.theta_n_data is None or self.dUn_dT_data is None:
-
-            raise ValueError(
-                "Negative electrode entropy data are not defined"
-            )
-
-        return np.interp(
-            theta_n,
-            self.theta_n_data,
-            self.dUn_dT_data
-        )
-
-    def dOCV_p_dT(self, theta_p):
-
-        if self.theta_p_data is None or self.dUp_dT_data is None:
-            raise ValueError(
-                "Positive electrode entropy data are not defined"
-            )
-
-        return np.interp(
-            theta_p,
-            self.theta_p_data,
-            self.dUp_dT_data
-        )
 
     def compute_Q_irr(self, I: float, Ueq: float, U: float) -> float:
 
@@ -342,43 +297,43 @@ class ThermalModel:
         return -I * T * dUeq_dT
 
     def compute_Q_cooling(self, T: float) -> float:
-        
-        p = self.param
 
         return (
-            p.h_cool
-            * p.A_surface
-            * (T - p.T_amb)
+            self.param.h_cool
+            * self.geo.A_surface
+            * (T - self.param.T_amb)
         )
 
-    def compute_derivatives(self, T: float, Ueq: float, U: float, I: float, c_s_n: np.ndarray, c_s_p: np.ndarray, j_sei) -> float:
+    # !!!!!!!!!!!!!!!!!!!!!!!! dOCV_p_dT
+    def compute_derivatives(self, T: float, Ueq: float, U: float, I: float, c_s_n: np.ndarray, c_s_p: np.ndarray, 
+        include_reversible_heat: bool = False) -> float:
 
         p = self.param
+        g = self.geo
 
-        # Electrode surface stoichiometries
-        theta_n = c_s_n[-1] / p.c_n_max
-        theta_p = c_s_p[-1] / p.c_p_max
-
-        # Full-cell entropic coefficient [V/K]
-        if (self.theta_n_data is None or self.dUn_dT_data is None
-                or self.theta_p_data is None or self.dUp_dT_data is None):
-            raise ValueError(
-                "Add entropy coefficient tables, before using include_reversible_heat=True!"
-            )
-        dUeq_dT = (
-            self.dOCV_p_dT(theta_p)
-            - self.dOCV_n_dT(theta_n)
-        )
-
-        # Heat generation [W]
+        # Irreversible heat [W]
         Q_irr = self.compute_Q_irr(I, Ueq, U)
-        Q_rev = self.compute_Q_rev(I, T, dUeq_dT)
+
+        # Reversible heat [W]
+        Q_rev = 0.0
+
+        '''if include_reversible_heat:
+
+            theta_n = c_s_n[-1] / p.c_n_max
+            theta_p = c_s_p[-1] / p.c_p_max
+
+            dUeq_dT = (
+                self.dOCV_p_dT(theta_p)
+                - self.dOCV_n_dT(theta_n)
+            )
+
+            Q_rev = self.compute_Q_rev(I, T, dUeq_dT)'''
 
         # Cooling [W]
         Q_cooling = self.compute_Q_cooling(T)
 
-        # Total heat capacity [J/K]
-        C_thermal = p.mass * p.Cp
+        # Thermal capacity [J/K]
+        C_thermal = p.get_theta_thermal(g) * g.V_batt
 
         # Temperature derivative [K/s]
         dT_dt = (Q_irr + Q_rev - Q_cooling) / C_thermal

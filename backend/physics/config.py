@@ -16,6 +16,26 @@ class BatteryGeometry:
     L_s: float = 25e-6
     L_p: float = 80e-6
 
+    L_x: float = 0.137
+    L_y: float = 0.207
+
+    @cached_property
+    def A_cell(self):
+        return self.L_x * self.L_y
+
+    @cached_property
+    def A_surface(self):
+        return 2 * (
+            self.A_cell
+            + (self.L_n + self.L_s + self.L_p) * (self.L_x + self.L_y)
+        )
+
+    @cached_property
+    def V_batt(self) -> float:
+        return self.A_cell * (
+            self.L_n + self.L_s + self.L_p
+        )
+
     # Spatial discretization step along thickness (x) [m]
     dx: float = 5e-6
 
@@ -109,11 +129,28 @@ class BatteryParameters:
     Ea_sei: float = 0
 
     # Thermal Parameters
-    mass: float = 0.04
-    Cp: float = 1100.0  # Heat Capacity [J/(kg·K)]
     h_cool: float = 10.0  # Convection [W/(m²·K)]
-    A_surface: float = 0.0569  # Cooling area [m²]
     T_amb: float = 298.15  # Environment [K]
+    rho_n: float = 1657.0
+    rho_s: float = 397.0
+    rho_p: float = 3262.0
+    Cp_n: float = 700.0
+    Cp_s: float = 700.0
+    Cp_p: float = 700.0
+    def get_theta_thermal(self, geo: BatteryGeometry) -> float:
+
+        numerator = (
+            self.rho_n * self.Cp_n * geo.L_n
+            + self.rho_s * self.Cp_s * geo.L_s
+            + self.rho_p * self.Cp_p * geo.L_p
+        )
+
+        L_total = (
+            geo.L_n + geo.L_s
+            + geo.L_p
+        )
+
+        return numerator / L_total
 
     # SEI Degradation Parameters
     k_sei_ref: float = 1e-12  # Reaction constant [m/s]
@@ -125,7 +162,6 @@ class BatteryParameters:
     D_sol_ref: float = 2.5e-22      # [m²/s]
     Ea_k_sei: float = 40000.0       # [J/mol]
     Ea_D_sol: float = 67000.0       # [J/mol]
-    # Note: T_ref is shared with the base electrochemistry section above.
 
     U_sei: float = 0.4        # [V], provisional
     alpha_sei: float = 0.5    # [-]
@@ -148,7 +184,6 @@ class BatteryParameters:
 class SimulationConfig:
 
     I_app: float = 0.680616           # [A]
-    A_cell: float = 0.137 * 0.207     # [m²]
     t_final: float = 3600.0
 
     theta_n_init: float = 0.8
@@ -160,31 +195,11 @@ class SimulationConfig:
     c_e_init: float = 1000.0
     T_init: float = 298.15
 
-    # Optional callable for time-varying current protocols (drive cycles, CC-CV, etc.)
-    # Signature: i_app_func(t: float) -> float [A/m²]
-    # Коли none використовуємо rjycnfyne i_app
-    I_app_func: Union[Callable[[float], float], None] = field(default=None, repr=False)
-
-    @property
-    def i_app(self) -> float:                # [A/m^2]
-        return self.I_app / self.A_cell
-
-    def get_I_app(self, t: float) -> float:
-        if self.I_app_func is not None:
-            return float(self.I_app_func(t))
-        return self.I_app
-
     def initial_solid_concentrations(self, param):
         return (
             self.theta_n_init * param.c_n_max,
             self.theta_p_init * param.c_p_max
         )
-
-    '''#Test
-    def OCV_n(self, theta):
-        return 0.10 + 0.20 * (1.0 - theta)
-    def OCV_p(self, theta):
-        return 4.10 - 0.60 * theta'''
 
     # Dualfoil1998    
     def OCV_n(self, theta):

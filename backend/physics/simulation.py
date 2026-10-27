@@ -30,7 +30,7 @@ class BatterySimulation:
         self.solid_p = SolidDiffusion(geo, param, sim, "p")
         self.electrolyte = ElectrolyteDiffusionSPMe(geo, param, sim)
         self.voltage = TerminalVoltage(geo, param, sim)
-        self.thermal = ThermalModel(param, sim)
+        self.thermal = ThermalModel(geo, param, sim)
         self.sei = SEIGrowth(param)
 
         n_n, n_p, n_e = geo.N_r_n, geo.N_r_p, geo.N_x_total
@@ -51,6 +51,9 @@ class BatterySimulation:
         self.atol[self.i_L] = 1e-13
         self.atol[self.i_Q] = 1e-9
 
+    @property
+    def i_app(self):
+        return self.sim.I_app / self.geo.A_cell
 
     # Заповнення векторів станів початковими значеннями акамуляртора
     def initial_state(self):
@@ -62,16 +65,13 @@ class BatterySimulation:
         y0[self.s_n] = c_n_init
         y0[self.s_p] = c_p_init
         y0[self.s_e] = self.sim.c_e_init
-        # Temperature [K]
         y0[self.i_T] = self.sim.T_init
-        # SEI thickness [m]
         y0[self.i_L] = self.param.L_sei_init
         # Initial lithium inventory loss [C]
         y0[self.i_Q] = 0.0
 
         return y0
 
-    # розпаковуємовектор ознак на конкретні масиви
     def _unpack(self, y):
         return (
             y[self.s_n], y[self.s_p], y[self.s_e],
@@ -89,21 +89,18 @@ class BatterySimulation:
         j0_n = self.voltage.compute_j0_x(
             c_e[:g.N_x_n], c_s_n[-1], p.K_n, p.c_n_max
         )
-        j_tot_n = sim.i_app / (p.get_b_n(g) * g.L_n)
+        j_tot_n = self.i_app / (p.get_b_n(g) * g.L_n)
 
         return self.sei.solve_j_sei(
             U_n=U_n,
             j0_n=j0_n,
             j_tot=j_tot_n,
             T=T,
-            L_sei=L_sei,
+            L_sei=L_sei
         )
 
 
-    def _temperature_derivative(
-        self, c_s_n, c_s_p, c_e, T, L_sei, j_sei
-    ):
-        """Calculate temperature derivative [K/s]."""
+    def _temperature_derivative(self, c_s_n, c_s_p, c_e, T, L_sei, j_sei):
 
         if not self.enable_thermal:
             return 0.0
@@ -112,42 +109,33 @@ class BatterySimulation:
 
         Ueq = self.voltage.Ueq(c_s_n, c_s_p)
 
-        V = self.voltage.calculate(c_s_n, c_s_p, c_e, T, L_film, j_sei)
+        V = self.voltage.calculate(
+            c_s_n, c_s_p, c_e,
+            self.i_app, T, L_film, j_sei
+        )
 
-        I_app = self.sim.i_app * self.sim.A_cell
-
-        if self.include_reversible_heat:
-            return self.thermal.compute_derivatives(
-                T, Ueq, V, I_app,
-                c_s_n, c_s_p, j_sei
-            )
-
-        Q_irr = self.thermal.compute_Q_irr(I_app, Ueq, V)
-
-        Q_cool = self.thermal.compute_Q_cooling(T)
-
-        return (
-            (Q_irr - Q_cool)
-            / (self.param.mass * self.param.Cp)
+        return self.thermal.compute_derivatives(
+            T, Ueq, V,
+            self.sim.I_app,
+            c_s_n, c_s_p,
+            include_reversible_heat=self.include_reversible_heat
         )
 
     # права частина системи диференціальних рівнянь (тобто похідних)
     def _rhs(self, t, y):
-
-        self.sim.I_app = self.sim.get_I_app(t)
 
         c_s_n, c_s_p, c_e, T, L_sei, _ = self._unpack(y)
 
         j_sei, _ = self._sei_current(c_s_n, c_e, T, L_sei)
 
         dy = np.zeros_like(y)
-        dy[self.s_n] = self.solid_n.compute_derivatives(c_s_n, T, j_sei)
-        dy[self.s_p] = self.solid_p.compute_derivatives(c_s_p, T)
-        dy[self.s_e] = self.electrolyte.compute_derivatives(c_e, T)
+        dy[self.s_n] = self.solid_n.compute_derivatives(c_s_n, self.i_app, T, j_sei)
+        dy[self.s_p] = self.solid_p.compute_derivatives(c_s_p, self.i_app, T)
+        dy[self.s_e] = self.electrolyte.compute_derivatives(c_e, self.i_app, T)
 
         # SEI film growth and lithium inventory loss
         if self.enable_sei:
-            active_area = self.sim.A_cell * self._b_n * self.geo.L_n
+            active_area = self.geo.A_cell * self._b_n * self.geo.L_n
             dL_dt, dQ_dt = self.sei.compute_derivatives(j_sei, active_area)
             dy[self.i_L] = dL_dt
             dy[self.i_Q] = dQ_dt
@@ -169,9 +157,9 @@ class BatterySimulation:
         )
 
         return float(self.voltage.calculate(
-            c_s_n, c_s_p, c_e, T,
+            c_s_n, c_s_p, c_e, self.i_app, T,
             L_sei if self.enable_sei else 0.0,
-            j_sei,
+            j_sei 
         ))
 
     def _integrate_interval(
@@ -266,9 +254,9 @@ class BatterySimulation:
             c_s_n, c_s_p, c_e, T, L_sei, _ = self._unpack(sol.y[:, i])
             j_sei, _ = self._sei_current(c_s_n, c_e, T, L_sei)
             voltage[i] = self.voltage.calculate(
-                c_s_n, c_s_p, c_e, T,
+                c_s_n, c_s_p, c_e, self.i_app, T,
                 L_sei if self.enable_sei else 0.0,
-                j_sei,
+                j_sei
             )
             j_sei_values[i] = j_sei
         return {
@@ -315,9 +303,6 @@ class BatterySimulation:
         if V_min >= V_max:
             raise ValueError("V_min must be below V_max")
 
-        if self.sim.I_app_func is not None:
-            raise ValueError("Set sim.I_app_func = None")
-
         y = self.initial_state()
         t = 0.0
 
@@ -335,9 +320,9 @@ class BatterySimulation:
                     discharge_time, V_min, -1),
                 ]
 
-                for phase, current, max_duration, cutoff, direction in phases:
+                for phase, phase_current, max_duration, cutoff, direction in phases:
 
-                    self.sim.I_app = current
+                    self.sim.I_app = phase_current
 
                     V_start = self._terminal_voltage(y)
 
@@ -367,7 +352,7 @@ class BatterySimulation:
                     diag = self.diagnostics(sol)
 
                     diag["current_A"] = np.full(
-                        sol.t.size, current
+                        sol.t.size, phase_current
                     )
                     diag["cycle"] = np.full(
                         sol.t.size, cycle
@@ -380,8 +365,7 @@ class BatterySimulation:
 
                     if phase == "discharge":
                         Q_dis = (
-                            current
-                            * self.sim.A_cell
+                            phase_current
                             * actual_duration
                             / 3600.0
                         )
