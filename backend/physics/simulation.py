@@ -87,7 +87,7 @@ class BatterySimulation:
         j0_n = self.voltage.compute_j0_x(
             c_e[:g.N_x_n], c_s_n[-1], p.K_n, p.c_n_max
         )
-        j_tot_n = self.i_app / (p.get_b_n(g) * g.L_n)
+        j_tot_n = self.i_app / (self._b_n * g.L_n)
 
         return self.sei.solve_j_sei(
             U_n=U_n,

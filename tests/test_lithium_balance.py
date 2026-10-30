@@ -29,12 +29,12 @@ def calculate_lithium_balance(sol, model):
     c_p_avg = w_p @ sol.y[model.s_p, :]
 
     Q_n = (
-        p.F * s.A_cell * g.L_n
+        p.F * g.A_cell * g.L_n
         * g.eps_active_n * c_n_avg
     )
 
     Q_p = (
-        p.F * s.A_cell * g.L_p
+        p.F *g.A_cell * g.L_p
         * g.eps_active_p * c_p_avg
     )
 

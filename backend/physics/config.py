@@ -12,9 +12,9 @@ class BatteryGeometry:
     N_r_p: int = 10
 
     # Zone thicknesses [m]
-    L_n: float = 100e-6
+    L_n: float = 80e-6
     L_s: float = 25e-6
-    L_p: float = 100e-6
+    L_p: float = 80e-6
 
     L_x: float = 0.137
     L_y: float = 0.207
@@ -68,16 +68,16 @@ class BatteryGeometry:
     def B_p(self) -> float: return self.eps_p ** self.brug
 
     # Number of points in zones
-    @property
+    @cached_property
     def N_x_n(self) -> int: return int(np.round(self.L_n / self.dx))
 
-    @property
+    @cached_property
     def N_x_s(self) -> int: return int(np.round(self.L_s / self.dx))
 
-    @property
+    @cached_property
     def N_x_p(self) -> int: return int(np.round(self.L_p / self.dx))
 
-    @property
+    @cached_property
     def N_x_total(self) -> int: return self.N_x_n + self.N_x_s + self.N_x_p
 
     # Dynamic grids

@@ -39,6 +39,12 @@ class SolidDiffusion:
         self.Ea = Ea
         self.b_k = b_k
         self.sign = sign
+        # Geometry never changes during a simulation
+        N = len(r)
+        self._dr = Rk / N
+        r_faces = np.linspace(0.0, Rk, N + 1)
+        self._r_faces_sq = r_faces[1:-1]**2
+        self._volumes = np.diff(r_faces**3) / 3.0
 
     def compute_jk(self, i_app, j_sei=0.0):
         p = self.param
@@ -72,18 +78,14 @@ class SolidDiffusion:
             * (1.0 / T - 1.0 / p.T_ref)
         )
 
-        dr = self.Rk / N
-        r_faces = np.linspace(0.0, self.Rk, N + 1)
-
-        volumes = np.diff(r_faces**3) / 3.0
 
         # Radially weighted molar flux: r^2 * J
         flux_faces = np.zeros(N + 1)
 
         # Internal diffusion fluxes
         flux_faces[1:-1] = (
-            -Dk * r_faces[1:-1]**2
-            * np.diff(c_s) / dr
+            -Dk * self._r_faces_sq
+            * np.diff(c_s) / self._dr
         )
 
         # Zero flux at the particle center
@@ -98,7 +100,7 @@ class SolidDiffusion:
         )
 
         # Conservative finite-volume balance
-        dc_s_dt = -np.diff(flux_faces) / volumes
+        dc_s_dt = -np.diff(flux_faces) / self._volumes
 
         return dc_s_dt
 
@@ -133,6 +135,11 @@ class ElectrolyteDiffusionSPMe:
             2 * self.B_x[:-1] * self.B_x[1:]
             / (self.B_x[:-1] + self.B_x[1:])
         )
+        self._source_basis = np.concatenate([
+            np.full(geo.N_x_n, (1-param.t_plus)/(geo.L_n*param.F)),
+            np.zeros(geo.N_x_s),
+            np.full(geo.N_x_p, -(1-param.t_plus)/(geo.L_p*param.F))
+        ])
 
     def compute_j_x(self, i_app: float) -> np.ndarray:
         geo = self.geo
@@ -163,7 +170,6 @@ class ElectrolyteDiffusionSPMe:
             * (1 / T - 1 / 298.15)
         )
 
-        j_x = self.compute_j_x(i_app)
 
         # Face diffusive flux, positive in +x direction
         J_faces = (
@@ -180,7 +186,7 @@ class ElectrolyteDiffusionSPMe:
         ) / geo.dx
 
         # Reaction source
-        source = ((1 - param.t_plus) * self.b_x * j_x)
+        source = self._source_basis * i_app
 
         dc_e_dt = (diffusion + source) / self.eps
 
@@ -286,6 +292,7 @@ class ThermalModel:
         self.geo = geo
         self.param = param
         self.sim = sim
+        self._C_thermal = param.get_theta_thermal(geo) * geo.V_batt
 
     def compute_Q_irr(self, I: float, Ueq: float, U: float) -> float:
 
@@ -314,7 +321,7 @@ class ThermalModel:
 
         Q_cooling = self.compute_Q_cooling(T)
 
-        C_thermal = p.get_theta_thermal(g) * g.V_batt
+        C_thermal = self._C_thermal
 
         dT_dt = (Q_irr + Q_rev - Q_cooling) / C_thermal
 
