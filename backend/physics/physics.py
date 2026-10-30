@@ -196,10 +196,9 @@ class TerminalVoltage:
 
     def Ueq(self, c_s_n, c_s_p):
         param = self.param
-        sim = self.sim
         th_n = c_s_n[-1] / param.c_n_max
         th_p = c_s_p[-1] / param.c_p_max
-        return sim.OCV_p(th_p) - sim.OCV_n(th_n)
+        return param.OCV_p(th_p) - param.OCV_n(th_n)
 
     def compute_j0_x(self, c_e_slice, c_k_surf, K_k, c_k_max):
 
@@ -292,9 +291,9 @@ class ThermalModel:
 
         return I * (Ueq - U)
 
-    def compute_Q_rev(self, I: float, T: float, dUeq_dT: float) -> float:
+    def compute_Q_rev(self, I: float, T: float) -> float:
         
-        return -I * T * dUeq_dT
+        return -I * T * self.param.dUeq_dT
 
     def compute_Q_cooling(self, T: float) -> float:
 
@@ -303,39 +302,20 @@ class ThermalModel:
             * self.geo.A_surface
             * (T - self.param.T_amb)
         )
-
-    # !!!!!!!!!!!!!!!!!!!!!!!! dOCV_p_dT
-    def compute_derivatives(self, T: float, Ueq: float, U: float, I: float, c_s_n: np.ndarray, c_s_p: np.ndarray, 
-        include_reversible_heat: bool = False) -> float:
+    
+    def compute_derivatives(self, T: float, Ueq: float, U: float, I: float) -> float:
 
         p = self.param
         g = self.geo
 
-        # Irreversible heat [W]
         Q_irr = self.compute_Q_irr(I, Ueq, U)
 
-        # Reversible heat [W]
-        Q_rev = 0.0
+        Q_rev = self.compute_Q_rev(I, T)
 
-        '''if include_reversible_heat:
-
-            theta_n = c_s_n[-1] / p.c_n_max
-            theta_p = c_s_p[-1] / p.c_p_max
-
-            dUeq_dT = (
-                self.dOCV_p_dT(theta_p)
-                - self.dOCV_n_dT(theta_n)
-            )
-
-            Q_rev = self.compute_Q_rev(I, T, dUeq_dT)'''
-
-        # Cooling [W]
         Q_cooling = self.compute_Q_cooling(T)
 
-        # Thermal capacity [J/K]
         C_thermal = p.get_theta_thermal(g) * g.V_batt
 
-        # Temperature derivative [K/s]
         dT_dt = (Q_irr + Q_rev - Q_cooling) / C_thermal
 
         return float(dT_dt)
@@ -385,7 +365,7 @@ class SEIGrowth:
 
         return U_n + eta_int - p.U_sei
 
-    # Reaction-limited SEI current
+
     def compute_j_rl(
         self,
         T: float,

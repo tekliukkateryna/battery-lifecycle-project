@@ -12,9 +12,9 @@ class BatteryGeometry:
     N_r_p: int = 10
 
     # Zone thicknesses [m]
-    L_n: float = 80e-6
+    L_n: float = 100e-6
     L_s: float = 25e-6
-    L_p: float = 80e-6
+    L_p: float = 100e-6
 
     L_x: float = 0.137
     L_y: float = 0.207
@@ -101,7 +101,6 @@ class BatteryParameters:
     F: float = 96485.33
     R: float = 8.31446
 
-    # Check !!!!!!!!!!!!!!!!!!!!!!!!!!!!
     # Kinetic coefficients converted to BV
     K_n: float = 1.63764e-4       # 8.19e-5
     K_p: float = 1.00719e-5      # 5.03e-6
@@ -128,6 +127,35 @@ class BatteryParameters:
     Ea_De: float = 37040.0
     Ea_sei: float = 0
 
+    # OCV curves
+    # Dualfoil1998    
+    def OCV_n(self, theta):
+        return (0.194
+        + 1.5 * np.exp(-120.0 * theta)
+        + 0.0351 * np.tanh((theta - 0.286) / 0.083)
+        - 0.0045 * np.tanh((theta - 0.849) / 0.119)
+        - 0.035 * np.tanh((theta - 0.9233) / 0.05)
+        - 0.0147 * np.tanh((theta - 0.5) / 0.034)
+        - 0.102 * np.tanh((theta - 0.194) / 0.142)
+        - 0.022 * np.tanh((theta - 0.9) / 0.0164)
+        - 0.011 * np.tanh((theta - 0.124) / 0.0226)
+        + 0.0155 * np.tanh((theta - 0.105) / 0.029)
+        )
+    
+    def OCV_p(self, theta):
+        stretch = 1.062
+        theta = stretch * theta
+
+        return (
+            2.16216
+            + 0.07645 * np.tanh(30.834 - 54.4806 * theta)
+            + 2.1581 * np.tanh(52.294 - 50.294 * theta)
+            - 0.14169 * np.tanh(11.0923 - 19.8543 * theta)
+            + 0.2051 * np.tanh(1.4684 - 5.4888 * theta)
+            + 0.2531 * np.tanh((-theta + 0.56478) / 0.1316)
+            - 0.02167 * np.tanh((theta - 0.525) / 0.006)
+        )
+
     # Thermal Parameters
     h_cool: float = 10.0  # Convection [W/(m²·K)]
     T_amb: float = 298.15  # Environment [K]
@@ -151,6 +179,7 @@ class BatteryParameters:
         )
 
         return numerator / L_total
+    dUeq_dT: float = -0.4e-3
 
     # SEI Degradation Parameters
     k_sei_ref: float = 1e-12  # Reaction constant [m/s]
@@ -199,32 +228,4 @@ class SimulationConfig:
         return (
             self.theta_n_init * param.c_n_max,
             self.theta_p_init * param.c_p_max
-        )
-
-    # Dualfoil1998    
-    def OCV_n(self, theta):
-        return (0.194
-        + 1.5 * np.exp(-120.0 * theta)
-        + 0.0351 * np.tanh((theta - 0.286) / 0.083)
-        - 0.0045 * np.tanh((theta - 0.849) / 0.119)
-        - 0.035 * np.tanh((theta - 0.9233) / 0.05)
-        - 0.0147 * np.tanh((theta - 0.5) / 0.034)
-        - 0.102 * np.tanh((theta - 0.194) / 0.142)
-        - 0.022 * np.tanh((theta - 0.9) / 0.0164)
-        - 0.011 * np.tanh((theta - 0.124) / 0.0226)
-        + 0.0155 * np.tanh((theta - 0.105) / 0.029)
-        )
-    
-    def OCV_p(self, theta):
-        stretch = 1.062
-        theta = stretch * theta
-
-        return (
-            2.16216
-            + 0.07645 * np.tanh(30.834 - 54.4806 * theta)
-            + 2.1581 * np.tanh(52.294 - 50.294 * theta)
-            - 0.14169 * np.tanh(11.0923 - 19.8543 * theta)
-            + 0.2051 * np.tanh(1.4684 - 5.4888 * theta)
-            + 0.2531 * np.tanh((-theta + 0.56478) / 0.1316)
-            - 0.02167 * np.tanh((theta - 0.525) / 0.006)
         )

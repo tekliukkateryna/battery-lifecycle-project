@@ -15,16 +15,14 @@ class BatterySimulation:
         geo,
         param,
         sim,
-        enable_sei=False,
-        enable_thermal=False,
-        include_reversible_heat=False,
+        enable_sei,
+        enable_thermal
     ):
         self.geo = geo
         self.param = param
         self.sim = sim
         self.enable_sei = enable_sei
         self.enable_thermal = enable_thermal
-        self.include_reversible_heat = include_reversible_heat
 
         self.solid_n = SolidDiffusion(geo, param, sim, "n")
         self.solid_p = SolidDiffusion(geo, param, sim, "p")
@@ -83,9 +81,9 @@ class BatterySimulation:
         if not self.enable_sei:
             return 0.0, 0.0
 
-        p, g, sim = self.param, self.geo, self.sim
+        p, g = self.param, self.geo
         theta_n = c_s_n[-1] / p.c_n_max
-        U_n = sim.OCV_n(theta_n)
+        U_n = p.OCV_n(theta_n)
         j0_n = self.voltage.compute_j0_x(
             c_e[:g.N_x_n], c_s_n[-1], p.K_n, p.c_n_max
         )
@@ -116,9 +114,7 @@ class BatterySimulation:
 
         return self.thermal.compute_derivatives(
             T, Ueq, V,
-            self.sim.I_app,
-            c_s_n, c_s_p,
-            include_reversible_heat=self.include_reversible_heat
+            self.sim.I_app
         )
 
     # права частина системи диференціальних рівнянь (тобто похідних)
@@ -197,9 +193,9 @@ class BatterySimulation:
             method="BDF",
             t_eval=times,
             events=event,
-            rtol=1e-6,
+            rtol=1e-5,
             atol=self.atol,
-            max_step=60.0,
+            max_step=300.0,
         )
 
         if not sol.success:
@@ -230,7 +226,6 @@ class BatterySimulation:
 
 
     def run(self, t_final=None, num_points=201):
-        """Run one continuous battery simulation."""
 
         end = float(
             self.sim.t_final if t_final is None else t_final
@@ -266,7 +261,7 @@ class BatterySimulation:
             "sei_thickness_m": sol.y[self.i_L],
             "capacity_loss_Ah": sol.y[self.i_Q] / 3600.0,
             "j_sei_A_m2": j_sei_values,
-        }
+        } 
 
 
     def run_cycles(
@@ -275,7 +270,7 @@ class BatterySimulation:
         charge_time=3600.0,
         discharge_time=3600.0,
         current=None,
-        points_per_phase=61,
+        points_per_phase=11,
         V_max=None,
         V_min=None,
     ):

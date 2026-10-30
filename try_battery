@@ -17,11 +17,11 @@ model = BatterySimulation(
     enable_thermal=True
 )
 
-# 100 cycles
+# 1000 cycles
 data = model.run_cycles(
     n_cycles = 1000,
-    charge_time = 3600.0,
-    discharge_time = 3600.0,
+    charge_time = 3 * 3600.0,
+    discharge_time = 3 * 3600.0,
 )
 
 summary = data["cycle_summary"]
@@ -36,13 +36,6 @@ ax.plot(
 ax.set_xlabel("Cycle number")
 ax.set_ylabel("Relative SOH [%]")
 ax.set_title("Capacity retention during cycling")
-
-# Disable the +1e2 offset
-ax.ticklabel_format(
-    axis="y",
-    style="plain",
-    useOffset=False
-)
 
 # Show four decimal places
 ax.yaxis.set_major_formatter(
