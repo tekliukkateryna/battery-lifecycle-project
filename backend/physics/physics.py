@@ -1,204 +1,489 @@
 import numpy as np
+from scipy.optimize import brentq
+
+from backend.physics.config import BatteryGeometry, BatteryParameters, SimulationConfig
 
 class SolidDiffusion:
 
-    def __init__(self, N_r, Rk, Dk, Iapp, Lk, epsilon):
-        self.N_r = N_r
+    def __init__(self, geo: BatteryGeometry, param: BatteryParameters, sim: SimulationConfig, electrode):
+        self.geo = geo
+        self.param = param
+        self.electrode = electrode
+        self.sim = sim
+
+        if electrode == "n":
+            r = geo.r_n
+            Rk = geo.R_n
+            Lk = geo.L_n
+            D_ref = param.D_s_n_ref
+            Ea = param.Ea_Ds_n
+            b_k = param.get_b_n(geo)
+            sign = 1.0
+
+        elif electrode == "p":
+            r = geo.r_p
+            Rk = geo.R_p
+            Lk = geo.L_p
+            D_ref = param.D_s_p_ref
+            Ea = param.Ea_Ds_p
+            b_k = param.get_b_p(geo)
+            sign = -1.0
+
+        else:
+            raise ValueError("electrode must be 'n' or 'p'")
+
+        self.r = r
         self.Rk = Rk
-        self.Dk = Dk
-        self.Iapp = Iapp
         self.Lk = Lk
-        self.Fc = 96485.33
-        self.b_k = 1.0 - epsilon
+        self.D_ref = D_ref
+        self.Ea = Ea
+        self.b_k = b_k
+        self.sign = sign
 
-        self.r = np.linspace(0, Rk, N_r)
-        self.dr = self.r[1] - self.r[0]
+    def compute_jk(self, i_app, j_sei=0.0):
+        p = self.param
 
-    def compute_derivatives(self, t, Ck, T):
+        if self.electrode == "n":
+            j_tot = (
+                i_app
+                / (self.b_k * self.Lk)
+            )
 
-        R = 8.31446
-        dc_dt = np.zeros_like(Ck)
+            return j_tot - j_sei
 
-        # Арреніус
-        Dk = self.D_s_ref * np.exp(
-            -(self.Ea_Ds / R) * (1.0 / T - 1.0 / 298.15)
+        elif self.electrode == "p":
+            return (
+                -i_app
+                / (self.b_k * self.Lk)
+            )
+
+        else:
+            raise ValueError("Unknown electrode")
+
+
+    def compute_derivatives(self, c_s: np.ndarray, i_app: float, T: float, j_sei: float = 0.0) -> np.ndarray:
+
+        p = self.param
+        N = len(c_s)
+
+        # Temperature-dependent diffusion coefficient
+        Dk = self.D_ref * np.exp(
+            -self.Ea / p.R
+            * (1.0 / T - 1.0 / p.T_ref)
         )
 
-        # Внутрішні вузли
-        d2c_dr2 = (Ck[2:] - 2 * Ck[1:-1] + Ck[:-2]) / self.dr**2
-        dc_dr = (Ck[2:] - Ck[:-2]) / (2 * self.dr)
-        dc_dt[1:-1] = Dk * (d2c_dr2 + (2 / self.r[1:-1]) * dc_dr)
+        dr = self.Rk / N
+        r_faces = np.linspace(0.0, self.Rk, N + 1)
 
-        # Гранична умова в центрі (r = 0)
-        dc_dt[0] = 3 * Dk * (2 * (Ck[1] - Ck[0])) / self.dr**2
+        volumes = np.diff(r_faces**3) / 3.0
 
-        # Гранична умова на поверхні (r = Rk)
-        iapp_now = self.Iapp(t) if callable(self.Iapp) else self.Iapp
-        jk = iapp_now / self.Lk
-        surface_flux = jk / (self.b_k * self.Fc)
+        # Radially weighted molar flux: r^2 * J
+        flux_faces = np.zeros(N + 1)
 
-        dc_dt[-1] = (2 * Dk / self.dr**2 * (Ck[-2] - Ck[-1] - self.dr * (surface_flux / Dk)) + (2 * Dk / self.Rk) * (-surface_flux / Dk))
+        # Internal diffusion fluxes
+        flux_faces[1:-1] = (
+            -Dk * r_faces[1:-1]**2
+            * np.diff(c_s) / dr
+        )
 
-        return dc_dt
+        # Zero flux at the particle center
+        flux_faces[0] = 0.0
+
+        # Surface intercalation current density [A/m^2]
+        j_int = self.compute_jk(i_app, j_sei)
+
+        # Surface boundary condition
+        flux_faces[-1] = (
+            self.Rk**2 * j_int / p.F
+        )
+
+        # Conservative finite-volume balance
+        dc_s_dt = -np.diff(flux_faces) / volumes
+
+        return dc_s_dt
 
 class ElectrolyteDiffusionSPMe:
 
-    def __init__(self, geometry, parameters, config):
-        self.N_x_n = geometry.N_x_n
-        self.N_x_s = geometry.N_x_s
-        self.N_x_p = geometry.N_x_p
-        self.dx = geometry.dx
+    def __init__(self, geo: BatteryGeometry, param: BatteryParameters, sim: SimulationConfig):
 
-        self.F = parameters.F
-        self.t_plus = parameters.t_plus
+        self.geo = geo
+        self.param = param
+        self.sim = sim
 
-        # Вектор пористостей eps(x)
         self.eps = np.concatenate([
-            np.full(self.N_x_n, geometry.eps_n),
-            np.full(self.N_x_s, geometry.eps_s),
-            np.full(self.N_x_p, geometry.eps_p),
+            np.full(geo.N_x_n, geo.eps_n),
+            np.full(geo.N_x_s, geo.eps_s),
+            np.full(geo.N_x_p, geo.eps_p),
         ])
 
-        # Вектор коефіцієнтів Бруггемана B(x)
         self.B_x = np.concatenate([
-            np.full(self.N_x_n, parameters.B_n),
-            np.full(self.N_x_s, parameters.B_s),
-            np.full(self.N_x_p, parameters.B_p),
+            np.full(geo.N_x_n, geo.B_n),
+            np.full(geo.N_x_s, geo.B_s),
+            np.full(geo.N_x_p, geo.B_p),
         ])
 
-        # Вектор геометричних властивостей матеріалу b(x)
         self.b_x = np.concatenate([
-            np.full(self.N_x_n, parameters.b_n),
-            np.full(self.N_x_s, parameters.b_s),
-            np.full(self.N_x_p, parameters.b_p),
+            np.full(geo.N_x_n, param.get_b_n(geo)),
+            np.full(geo.N_x_s, param.get_b_s(geo)),
+            np.full(geo.N_x_p, param.get_b_p(geo)),
         ])
 
-        self.Iapp = config.Iapp
-
-        self.L_n = geometry.L_n
-        self.L_s = geometry.L_s
-        self.L_p = geometry.L_p
-
-        # Створення сітки координат x_grid (у центрах комірок)
-        N_total = self.N_x_n + self.N_x_s + self.N_x_p
-        self.x_grid = (np.arange(N_total) + 0.5) * self.dx
-
-        # Температурні параметри для D_e(T)
-        self.D_e_ref = parameters.D_e_ref
-        self.Ea_De = parameters.Ea_De
-
-    @staticmethod
-    def compute_i_e(x_grid, I_app, L_n, L_s, L_p):
-        L_total = L_n + L_s + L_p
-        i_e = np.zeros_like(x_grid)
-
-        # Анод: (I_app / L_n) * x
-        mask_n = x_grid <= L_n
-        i_e[mask_n] = (I_app / L_n) * x_grid[mask_n]
-
-        # Сепаратор: I_app
-        mask_s = (x_grid > L_n) & (x_grid < (L_total - L_p))
-        i_e[mask_s] = I_app
-
-        # Катод: (I_app / L_p) * (L - x)
-        mask_p = x_grid >= (L_total - L_p)
-        i_e[mask_p] = (I_app / L_p) * (L_total - x_grid[mask_p])
-
-        return i_e
-
-    @staticmethod
-    def compute_j_x(x_grid, I_app, L_n, L_s, L_p):
-        L_total = L_n + L_s + L_p
-        j_x = np.zeros_like(x_grid)
-
-        # Анод: j_n = I_app / L_n
-        mask_n = x_grid <= L_n
-        j_x[mask_n] = I_app / L_n
-
-        # Сепаратор: j_s = 0 (залишаються нулі)
-
-        # Катод: j_p = -I_app / L_p
-        mask_p = x_grid >= (L_total - L_p)
-        j_x[mask_p] = -I_app / L_p
-
-        return j_x
-
-    def compute_derivatives(self, Ck, T):
-        R = 8.314
-
-        # Автоматичний розрахунок i_e та j_x для поточних параметрів
-        i_e_x = self.compute_i_e(
-            self.x_grid, self.Iapp, self.L_n, self.L_s, self.L_p
-        )
-        j_x = self.compute_j_x(
-            self.x_grid, self.Iapp, self.L_n, self.L_s, self.L_p
+        # Harmonic mean at internal cell faces
+        self.B_faces = (
+            2 * self.B_x[:-1] * self.B_x[1:]
+            / (self.B_x[:-1] + self.B_x[1:])
         )
 
-        # D_e(c_e, T) з урахуванням температури (Арреніус)
-        D_e_bulk = self.D_e_ref * np.exp(
-            -(self.Ea_De / R) * (1 / T - 1 / 298.15)
+    def compute_j_x(self, i_app: float) -> np.ndarray:
+        geo = self.geo
+        param = self.param
+
+        # Molar interfacial flux [mol/(m² s)]
+        j_n = np.full(
+            geo.N_x_n,
+            i_app / (geo.L_n * param.F * self.b_x[0])
         )
 
-        # Ефективна дифузія D_eff(x) = D_e * B(x)
-        D_eff = D_e_bulk * self.B_x
+        j_s = np.zeros(geo.N_x_s)
 
-        # Дифузійний потік (Гармонійне середнє на межах)
-        D_interface = 2 * D_eff[:-1] * D_eff[1:] / (D_eff[:-1] + D_eff[1:])
-        diff_flux = -D_interface * (Ck[1:] - Ck[:-1]) / self.dx
-
-        # Міграційний потік (Усереднення i_e на межах)
-        i_e_interface = 0.5 * (i_e_x[:-1] + i_e_x[1:])
-        migration_flux = (self.t_plus / self.F) * i_e_interface
-
-        # Повний потік J
-        total_flux = diff_flux - migration_flux
-
-        # Граничні умови - нульовий потік на стінках x=0 та x=L
-        flux_full = np.pad(
-            total_flux, (1, 1), mode="constant", constant_values=0
+        j_p = np.full(
+            geo.N_x_p,
+            -i_app / (geo.L_p * param.F * self.b_x[-1])
         )
 
-        # Джерельний доданок
-        source_term = (self.b_x * j_x) / self.F
+        return np.concatenate([j_n, j_s, j_p])
 
-        # Остаточне рівняння: dc_e/dt
-        dc_e_dt = (
-            -(flux_full[1:] - flux_full[:-1]) / (self.dx * self.eps)
-        ) + (source_term / self.eps)
+    def compute_derivatives(self, c_e: np.ndarray, i_app: float, T: float) -> np.ndarray:
+
+        geo = self.geo
+        param = self.param
+
+        D_e_bulk = param.D_e_ref * np.exp(
+            -(param.Ea_De / param.R)
+            * (1 / T - 1 / 298.15)
+        )
+
+        j_x = self.compute_j_x(i_app)
+
+        # Face diffusive flux, positive in +x direction
+        J_faces = (
+            -D_e_bulk * self.B_faces
+            * (c_e[1:] - c_e[:-1]) / geo.dx
+        )
+
+        # Zero flux at the external boundaries
+        J_full = np.pad(J_faces, (1, 1), mode="constant", constant_values=0)
+
+        # Divergence of diffusive flux
+        diffusion = (
+            J_full[:-1] - J_full[1:]
+        ) / geo.dx
+
+        # Reaction source
+        source = ((1 - param.t_plus) * self.b_x * j_x)
+
+        dc_e_dt = (diffusion + source) / self.eps
 
         return dc_e_dt
 
 
-#Треба дописать OCV криві бо це функція або таблиця, я там це маю в одній статті про це прочитати
 class TerminalVoltage:
-    def __init__(self, parameters):
-        self.R = parameters.R
-        self.F = parameters.F
-        self.T = parameters.T
+    def __init__(self, geo, param, sim):
+        self.param, self.geo, self.sim = param, geo, sim
+        # Save active surface densities
+        self._b_n = param.get_b_n(geo)
+        self._b_p = param.get_b_p(geo)
 
-    #def calculate(self):
+    def Ueq(self, c_s_n, c_s_p):
+        param = self.param
+        th_n = c_s_n[-1] / param.c_n_max
+        th_p = c_s_p[-1] / param.c_p_max
+        return param.OCV_p(th_p) - param.OCV_n(th_n)
 
-        ##################### Це я зараз пишу #################
+    def compute_j0_x(self, c_e_slice, c_k_surf, K_k, c_k_max):
 
-        # Рівноважна напруга (OCV)
+        param = self.param
         
+        radicand = ((c_e_slice / param.c_e_0) * (c_k_surf/c_k_max) * (1 - c_k_surf/c_k_max))
+        return (param.F * K_k * np.sqrt(radicand)).mean()                     # dimensional form, [A/m²]
 
-        # Кінетична перенапруга
+    def eta_r(self, c_e, c_s_n, c_s_p, i_app, T, j_sei=0.0):
         
-
-        # Концентраційна перенапруга (просто середнє значення c_e по геометрії)
+        geo = self.geo
+        param = self.param
+        sim = self.sim
         
-
-        # Омічні втрати (константний опір * струм)
+        # Total negative electrode current density [A/m²]
+        j_tot_n = i_app / (self._b_n * geo.L_n)
         
+        # Intercalation current density [A/m²]
+        j_n = j_tot_n - j_sei
+        
+        # Positive electrode current density [A/m²]
+        j_p = -i_app / (self._b_p * geo.L_p)
 
-        # Напруга батареї
-        #V = U_eq - eta_r - eta_c - delta_phi_e - delta_phi_s
+        # Exchange current densities [A/m²]
+        j_n0 = self.compute_j0_x(
+            c_e[:geo.N_x_n],
+            c_s_n[-1],
+            param.K_n,
+            param.c_n_max
+        )
 
-        #return V
+        j_p0 = self.compute_j0_x(
+            c_e[geo.N_x_n + geo.N_x_s:],
+            c_s_p[-1],
+            param.K_p,
+            param.c_p_max
+        )
 
-#class ThermalBalance:
+        return (
+            2 * param.R * T / param.F
+            * (
+                np.arcsinh(j_n / (2 * j_n0))
+                - np.arcsinh(j_p / (2 * j_p0))
+            )
+        )
+
+    def eta_c(self, c_e, T):
+        g, p = self.geo, self.param
+        return (1 - p.t_plus) * 2 * p.R * T / (p.F * p.c_e_0) * (
+            c_e[:g.N_x_n].mean() - c_e[g.N_x_n + g.N_x_s:].mean())
+
+    def dphi_e(self, i_app): 
+        
+        return i_app / self.param.sigma_e * (
+            self.geo.L_n / (3 * self.geo.B_n) + self.geo.L_s / self.geo.B_s + self.geo.L_p / (3 * self.geo.B_p))
     
+    def dphi_s(self, i_app): 
+        return i_app / 3 * (
+            self.geo.L_p / self.param.sigma_p + self.geo.L_n / self.param.sigma_n)
+
+    def dphi_f(self, i_app, L_sei: float) -> float:
+
+        return (
+            i_app * L_sei
+            / (self.geo.L_n * self._b_n * self.param.sigma_sei)
+        )
+
+    def calculate(self, c_s_n, c_s_p, c_e, i_app, T, L_sei, j_sei=0):
+
+        U = (
+            self.Ueq(c_s_n, c_s_p)
+            - self.eta_r(c_e, c_s_n, c_s_p, i_app, T, j_sei)
+            - self.eta_c(c_e, T)
+            - self.dphi_e(i_app)
+            - self.dphi_s(i_app)
+            - self.dphi_f(i_app, L_sei)
+        )
+
+        return U
+
+class ThermalModel:
+
+    def __init__(self, geo: BatteryGeometry, param: BatteryParameters, sim: SimulationConfig):
+
+        self.geo = geo
+        self.param = param
+        self.sim = sim
+
+    def compute_Q_irr(self, I: float, Ueq: float, U: float) -> float:
+
+        return I * (Ueq - U)
+
+    def compute_Q_rev(self, I: float, T: float) -> float:
+        
+        return -I * T * self.param.dUeq_dT
+
+    def compute_Q_cooling(self, T: float) -> float:
+
+        return (
+            self.param.h_cool
+            * self.geo.A_surface
+            * (T - self.param.T_amb)
+        )
+    
+    def compute_derivatives(self, T: float, Ueq: float, U: float, I: float) -> float:
+
+        p = self.param
+        g = self.geo
+
+        Q_irr = self.compute_Q_irr(I, Ueq, U)
+
+        Q_rev = self.compute_Q_rev(I, T)
+
+        Q_cooling = self.compute_Q_cooling(T)
+
+        C_thermal = p.get_theta_thermal(g) * g.V_batt
+
+        dT_dt = (Q_irr + Q_rev - Q_cooling) / C_thermal
+
+        return float(dT_dt)
 
 
-#class SeiDegradation:
+# Поки не враховує зміну пористості в elecrolyte diffusion в зоні аноду
+class SEIGrowth:
+
+    def __init__(self, param):
+        self.param = param
+
+
+    def compute_k_sei(self, T: float) -> float:
+        p = self.param
+
+        return p.k_sei_ref * np.exp(
+            -p.Ea_k_sei / p.R
+            * (1.0 / T - 1.0 / p.T_ref)
+        )
+
+    def compute_D_sol(self, T: float) -> float:
+        p = self.param
+
+        return p.D_sol_ref * np.exp(
+            -p.Ea_D_sol / p.R
+            * (1.0 / T - 1.0 / p.T_ref)
+        )
+
+
+    def compute_eta_sei(
+        self,
+        U_n: float,
+        j_int: float,
+        j0_n: float,
+        T: float
+    ) -> float:
+
+        p = self.param
+
+        if j0_n <= 0:
+            raise ValueError("j0_n must be positive")
+
+        eta_int = (
+            2.0 * p.R * T / p.F
+            * np.arcsinh(j_int / (2.0 * j0_n))
+        )
+
+        return U_n + eta_int - p.U_sei
+
+
+    def compute_j_rl(
+        self,
+        T: float,
+        eta_sei: float
+    ) -> float:
+
+        p = self.param
+
+        k_sei = self.compute_k_sei(T)
+
+        exponent = (
+            -p.alpha_sei * p.F * eta_sei
+            / (p.R * T)
+        )
+
+        # Numerical protection against overflow
+        exponent = np.clip(exponent, -100.0, 100.0)
+
+        return (
+            -p.F * k_sei * p.c_sol_e
+            * np.exp(exponent)
+        )
+
+    # Diffusion-limited SEI current
+    def compute_j_dl(
+        self,
+        T: float,
+        L_sei: float
+    ) -> float:
+
+        p = self.param
+
+        if L_sei <= 0:
+            raise ValueError("L_sei must be positive")
+
+        D_sol = self.compute_D_sol(T)
+
+        return (
+            -p.F * D_sol * p.c_sol_e
+            / L_sei
+        )
+
+    # Combined SEI current
+    def compute_j_sei(
+        self,
+        T: float,
+        eta_sei: float,
+        L_sei: float
+    ) -> float:
+
+        j_rl = self.compute_j_rl(T, eta_sei)
+        j_dl = self.compute_j_dl(T, L_sei)
+
+        return j_rl * j_dl / (j_rl + j_dl)
+
+    # Self-consistent SEI current
+    def solve_j_sei(
+        self,
+        U_n: float,
+        j0_n: float,
+        j_tot: float,
+        T: float,
+        L_sei: float
+    ) -> tuple[float, float]:
+
+        j_dl = self.compute_j_dl(T, L_sei)
+
+        def residual(j_sei):
+
+            # Intercalation current [A/m²]
+            j_int = j_tot - j_sei
+
+            # SEI overpotential [V]
+            eta_sei = self.compute_eta_sei(
+                U_n, j_int, j0_n, T
+            )
+
+            # SEI current [A/m²]
+            j_model = self.compute_j_sei(
+                T, eta_sei, L_sei
+            )
+
+            return j_sei - j_model
+
+        # Both limiting currents are negative.
+        # Physical root lies between j_dl and zero.
+        j_sei = brentq(
+            residual,
+            j_dl,
+            0.0,
+            xtol=1e-20,
+            rtol=1e-12
+        )
+
+        j_int = j_tot - j_sei
+
+        eta_sei = self.compute_eta_sei(
+            U_n, j_int, j0_n, T
+        )
+
+        return float(j_sei), float(eta_sei)
+
+    # SEI growth and lithium inventory loss
+    def compute_derivatives(
+        self,
+        j_sei: float,
+        A_active: float
+    ) -> tuple[float, float]:
+
+        p = self.param
+
+        # SEI thickness growth [m/s]
+        dL_sei_dt = (
+            -p.M_sei * j_sei
+            / (p.n_sei * p.F * p.rho_sei)
+        )
+
+        # Loss of cyclable lithium inventory [C/s]
+        dQ_LLI_dt = -A_active * j_sei
+
+        return float(dL_sei_dt), float(dQ_LLI_dt)
