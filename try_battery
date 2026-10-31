@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-
+import time
 from backend.physics.config import BatteryGeometry, BatteryParameters, SimulationConfig
 from backend.physics.simulation import BatterySimulation
 
@@ -16,7 +16,7 @@ model = BatterySimulation(
     enable_sei=True,
     enable_thermal=True
 )
-
+start_time = time.perf_counter()
 # 1000 cycles
 data = model.run_cycles(
     n_cycles = 1000,
@@ -25,6 +25,9 @@ data = model.run_cycles(
 )
 
 summary = data["cycle_summary"]
+
+total_time_sec = time.perf_counter() - start_time
+print(total_time_sec / 60.0)
 
 fig, ax = plt.subplots(figsize=(9, 5))
 

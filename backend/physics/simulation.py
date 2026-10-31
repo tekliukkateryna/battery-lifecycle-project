@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.integrate import solve_ivp
+from scipy.sparse import lil_matrix
 
 from backend.physics.physics import (
     SolidDiffusion,
@@ -40,22 +41,71 @@ class BatterySimulation:
         self.i_Q = self.i_T + 2
         self.n_states = self.i_Q + 1
 
-        # not to recalculate every time
         self._b_n = param.get_b_n(geo)
 
-        # States have very different units/scales; protect the nanometre SEI state (atol - absolute tolerance)
         self.atol = np.full(self.n_states, 1e-5)
         self.atol[self.i_T] = 1e-6
         self.atol[self.i_L] = 1e-13
         self.atol[self.i_Q] = 1e-9
 
+        # Побудова та кешування спарсивної маски Якобіана
+        self.jac_sparsity = self._build_jac_sparsity()
+
+    def _build_jac_sparsity(self):
+        n = self.n_states
+        J = lil_matrix((n, n), dtype=int)
+
+        n_n = self.geo.N_r_n
+        for i in range(n_n):
+            J[i, i] = 1
+            if i > 0: J[i, i - 1] = 1
+            if i < n_n - 1: J[i, i + 1] = 1
+            J[i, self.i_T] = 1
+
+        for col in range(self.geo.N_x_n):
+            J[n_n - 1, self.s_e.start + col] = 1
+        J[n_n - 1, self.i_L] = 1
+
+        n_p = self.geo.N_r_p
+        off_p = self.s_p.start
+        for i in range(n_p):
+            idx = off_p + i
+            J[idx, idx] = 1
+            if i > 0: J[idx, idx - 1] = 1
+            if i < n_p - 1: J[idx, idx + 1] = 1
+            J[idx, self.i_T] = 1
+
+        n_e = self.geo.N_x_total
+        off_e = self.s_e.start
+        for i in range(n_e):
+            idx = off_e + i
+            J[idx, idx] = 1
+            if i > 0: J[idx, idx - 1] = 1
+            if i < n_e - 1: J[idx, idx + 1] = 1
+            J[idx, self.i_T] = 1
+
+
+        J[self.i_T, self.s_n.start + n_n - 1] = 1
+        J[self.i_T, self.s_p.start + n_p - 1] = 1
+        for col in range(n_e):
+            J[self.i_T, off_e + col] = 1
+        J[self.i_T, self.i_T] = 1
+        J[self.i_T, self.i_L] = 1
+
+        for row in (self.i_L, self.i_Q):
+            J[row, self.s_n.start + n_n - 1] = 1
+            for col in range(self.geo.N_x_n):
+                J[row, off_e + col] = 1
+            J[row, self.i_T] = 1
+            J[row, self.i_L] = 1
+
+        return J.tocsc()
+
     @property
     def i_app(self):
         return self.sim.I_app / self.geo.A_cell
 
-    # Заповнення векторів станів початковими значеннями акамуляртора
     def initial_state(self):
-
         y0 = np.empty(self.n_states)
         c_n_init, c_p_init = (
             self.sim.initial_solid_concentrations(self.param)
@@ -65,9 +115,7 @@ class BatterySimulation:
         y0[self.s_e] = self.sim.c_e_init
         y0[self.i_T] = self.sim.T_init
         y0[self.i_L] = self.param.L_sei_init
-        # Initial lithium inventory loss [C]
         y0[self.i_Q] = 0.0
-
         return y0
 
     def _unpack(self, y):
@@ -77,7 +125,6 @@ class BatterySimulation:
         )
 
     def _sei_current(self, c_s_n, c_e, T, L_sei):
-        
         if not self.enable_sei:
             return 0.0, 0.0
 
@@ -97,14 +144,11 @@ class BatterySimulation:
             L_sei=L_sei
         )
 
-
     def _temperature_derivative(self, c_s_n, c_s_p, c_e, T, L_sei, j_sei):
-
         if not self.enable_thermal:
             return 0.0
 
         L_film = L_sei if self.enable_sei else 0.0
-
         Ueq = self.voltage.Ueq(c_s_n, c_s_p)
 
         V = self.voltage.calculate(
@@ -117,9 +161,7 @@ class BatterySimulation:
             self.sim.I_app
         )
 
-    # права частина системи диференціальних рівнянь (тобто похідних)
     def _rhs(self, t, y):
-
         c_s_n, c_s_p, c_e, T, L_sei, _ = self._unpack(y)
 
         j_sei, _ = self._sei_current(c_s_n, c_e, T, L_sei)
@@ -129,28 +171,22 @@ class BatterySimulation:
         dy[self.s_p] = self.solid_p.compute_derivatives(c_s_p, self.i_app, T)
         dy[self.s_e] = self.electrolyte.compute_derivatives(c_e, self.i_app, T)
 
-        # SEI film growth and lithium inventory loss
         if self.enable_sei:
             active_area = self.geo.A_cell * self._b_n * self.geo.L_n
             dL_dt, dQ_dt = self.sei.compute_derivatives(j_sei, active_area)
             dy[self.i_L] = dL_dt
             dy[self.i_Q] = dQ_dt
 
-        # Isothermal mode: retain temperature as a state but dT/dt=0.
         if self.enable_thermal:
             dy[self.i_T] = self._temperature_derivative(
                 c_s_n, c_s_p, c_e, T, L_sei, j_sei
-                )
+            )
             
         return dy
 
     def _terminal_voltage(self, y):
-
         c_s_n, c_s_p, c_e, T, L_sei, _ = self._unpack(y)
-
-        j_sei, _ = self._sei_current(
-            c_s_n, c_e, T, L_sei
-        )
+        j_sei, _ = self._sei_current(c_s_n, c_e, T, L_sei)
 
         return float(self.voltage.calculate(
             c_s_n, c_s_p, c_e, self.i_app, T,
@@ -174,11 +210,9 @@ class BatterySimulation:
             raise ValueError("num_points must be >= 2")
 
         times = np.linspace(t_start, t_end, num_points)
-
         event = None
 
         if voltage_cutoff is not None:
-
             def voltage_event(t, y):
                 return self._terminal_voltage(y) - voltage_cutoff
 
@@ -196,6 +230,7 @@ class BatterySimulation:
             rtol=1e-5,
             atol=self.atol,
             max_step=300.0,
+            jac_sparsity=self.jac_sparsity, 
         )
 
         if not sol.success:
@@ -208,13 +243,11 @@ class BatterySimulation:
                     f"was not reached before t={t_end:.1f} s"
                 )
 
-            # The event may occur between output points.
-            # Preserve its exact time and state.
             t_hit = float(sol.t_events[0][-1])
             y_hit = sol.y_events[0][-1].copy()
 
             if not np.isclose(
-            sol.t[-1], t_hit, atol=1e-9, rtol=0.0
+                sol.t[-1], t_hit, atol=1e-9, rtol=0.0
             ):
                 sol.t = np.append(sol.t, t_hit)
                 sol.y = np.column_stack((sol.y, y_hit))
@@ -224,9 +257,7 @@ class BatterySimulation:
 
         return sol
 
-
     def run(self, t_final=None, num_points=201):
-
         end = float(
             self.sim.t_final if t_final is None else t_final
         )
@@ -240,7 +271,6 @@ class BatterySimulation:
             y0=self.initial_state(),
             num_points=num_points,
         )
-
 
     def diagnostics(self, sol):
         voltage = np.empty(sol.t.size)
@@ -263,7 +293,6 @@ class BatterySimulation:
             "j_sei_A_m2": j_sei_values,
         } 
 
-
     def run_cycles(
         self,
         n_cycles=1,
@@ -274,7 +303,6 @@ class BatterySimulation:
         V_max=None,
         V_min=None,
     ):
-
         if current is None:
             current = self.sim.I_app
 
@@ -283,8 +311,6 @@ class BatterySimulation:
 
         if V_min is None:
             V_min = self.sim.lower_cut_off_V
-        
-        """Cycle with voltage cutoffs and measure capacity."""
 
         if n_cycles < 1 or current <= 0:
             raise ValueError("Invalid cycling parameters")
@@ -307,7 +333,6 @@ class BatterySimulation:
 
         try:
             for cycle in range(1, n_cycles + 1):
-
                 phases = [
                     ("charge", -current,
                     charge_time, V_max, +1),
@@ -316,7 +341,6 @@ class BatterySimulation:
                 ]
 
                 for phase, phase_current, max_duration, cutoff, direction in phases:
-
                     self.sim.I_app = phase_current
 
                     V_start = self._terminal_voltage(y)
@@ -383,7 +407,6 @@ class BatterySimulation:
             for key in results[0]
         }
 
-        # One measurement per cycle, not per time point.
         output["cycle_summary"] = {
             "cycle": np.arange(1, n_cycles + 1),
             "discharge_capacity_Ah": capacities,
