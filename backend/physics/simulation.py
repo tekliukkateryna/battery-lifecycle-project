@@ -118,13 +118,13 @@ class BatterySimulation:
         y0[self.i_Q] = 0.0
         return y0
 
-    def _unpack(self, y):
+    def _unpack(self, y: np.ndarray):
         return (
             y[self.s_n], y[self.s_p], y[self.s_e],
             float(y[self.i_T]), float(y[self.i_L]), float(y[self.i_Q]),
         )
 
-    def _sei_current(self, c_s_n, c_e, T, L_sei):
+    def _sei_current(self, c_s_n: np.ndarray, c_e: np.ndarray, T: float, L_sei: float):
         if not self.enable_sei:
             return 0.0, 0.0
 
@@ -144,7 +144,7 @@ class BatterySimulation:
             L_sei=L_sei
         )
 
-    def _temperature_derivative(self, c_s_n, c_s_p, c_e, T, L_sei, j_sei):
+    def _temperature_derivative(self, c_s_n: np.ndarray, c_s_p: np.ndarray, c_e: np.ndarray, T: float, L_sei: float, j_sei: float):
         if not self.enable_thermal:
             return 0.0
 
@@ -227,9 +227,9 @@ class BatterySimulation:
             method="BDF",
             t_eval=times,
             events=event,
-            rtol=1e-5,
+            rtol=1e-6,
             atol=self.atol,
-            max_step=300.0,
+            max_step=60.0,
             jac_sparsity=self.jac_sparsity, 
         )
 

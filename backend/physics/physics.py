@@ -85,6 +85,7 @@ def _solve_j_sei_numba(
     alpha_sei: float,
     c_sol_e: float,
     U_sei: float,
+    R_sei: float,
 ) -> tuple[float, float]:
     k_sei = k_sei_ref * math.exp(-Ea_k_sei / R * (1.0 / T - 1.0 / T_ref))
     D_sol = D_sol_ref * math.exp(-Ea_D_sol / R * (1.0 / T - 1.0 / T_ref))
@@ -101,7 +102,8 @@ def _solve_j_sei_numba(
         
         val = j_int / (2.0 * j0_n)
         eta_int = 2.0 * R * T / F * math.asinh(val)
-        eta_sei = U_n + eta_int - U_sei
+        #!!!!!!!!!!!!!!!!! Омічний опір
+        eta_sei = U_n + eta_int - U_sei - j_int * L_sei * R_sei
         
         exponent = -alpha_sei * F * eta_sei / (R * T)
         if exponent > 100.0:
@@ -120,7 +122,8 @@ def _solve_j_sei_numba(
     j_int = j_tot - mid
     val = j_int / (2.0 * j0_n)
     eta_int = 2.0 * R * T / F * math.asinh(val)
-    eta_sei = U_n + eta_int - U_sei
+    #!!!!!!!!!!!!!!!!! Омічний опір
+    eta_sei = U_n + eta_int - U_sei - j_int * L_sei * R_sei
 
     return mid, eta_sei
 
@@ -162,7 +165,7 @@ class SolidDiffusion:
         self.b_k = b_k
         self.sign = sign
 
-    def compute_jk(self, i_app, j_sei=0.0):
+    def compute_jk(self, i_app: float, j_sei: float=0.0):
         if self.electrode == "n":
             j_tot = i_app / (self.b_k * self.Lk)
             return j_tot - j_sei
@@ -263,18 +266,18 @@ class TerminalVoltage:
         self._b_n = param.get_b_n(geo)
         self._b_p = param.get_b_p(geo)
 
-    def Ueq(self, c_s_n, c_s_p):
+    def Ueq(self, c_s_n: np.ndarray, c_s_p: np.ndarray):
         param = self.param
         th_n = c_s_n[-1] / param.c_n_max
         th_p = c_s_p[-1] / param.c_p_max
         return param.OCV_p(th_p) - param.OCV_n(th_n)
 
-    def compute_j0_x(self, c_e_slice, c_k_surf, K_k, c_k_max):
+    def compute_j0_x(self, c_e_slice: np.ndarray, c_k_surf: float, K_k: float, c_k_max: float):
         param = self.param
         radicand = ((c_e_slice / param.c_e_0) * (c_k_surf / c_k_max) * (1 - c_k_surf / c_k_max))
         return (param.F * K_k * np.sqrt(radicand)).mean()
 
-    def eta_r(self, c_e, c_s_n, c_s_p, i_app, T, j_sei=0.0):
+    def eta_r(self, c_e: np.ndarray, c_s_n: np.ndarray, c_s_p: np.ndarray, i_app: float, T: float, j_sei: float=0.0):
         geo = self.geo
         param = self.param
         
@@ -297,29 +300,31 @@ class TerminalVoltage:
             )
         )
 
-    def eta_c(self, c_e, T):
+    def eta_c(self, c_e: np.ndarray, T: float):
         g, p = self.geo, self.param
         return (1 - p.t_plus) * 2 * p.R * T / (p.F * p.c_e_0) * (
             c_e[:g.N_x_n].mean() - c_e[g.N_x_n + g.N_x_s:].mean()
         )
 
-    def dphi_e(self, i_app): 
+    def dphi_e(self, i_app: float): 
         return i_app / self.param.sigma_e * (
             self.geo.L_n / (3 * self.geo.B_n) + self.geo.L_s / self.geo.B_s + self.geo.L_p / (3 * self.geo.B_p)
         )
     
-    def dphi_s(self, i_app): 
+    def dphi_s(self, i_app: float): 
         return i_app / 3 * (
             self.geo.L_p / self.param.sigma_p + self.geo.L_n / self.param.sigma_n
         )
 
-    def dphi_f(self, i_app, L_sei: float) -> float:
+    def dphi_f(self, i_app: float, L_sei: float) -> float:
+        # return 0
+        
         return (
             i_app * L_sei
             / (self.geo.L_n * self._b_n * self.param.sigma_sei)
         )
 
-    def calculate(self, c_s_n, c_s_p, c_e, i_app, T, L_sei, j_sei=0):
+    def calculate(self, c_s_n: np.ndarray, c_s_p: np.ndarray, c_e: np.ndarray, i_app: float, T: float, L_sei: float, j_sei: float=0):
         U = (
             self.Ueq(c_s_n, c_s_p)
             - self.eta_r(c_e, c_s_n, c_s_p, i_app, T, j_sei)
@@ -378,12 +383,14 @@ class SEIGrowth:
         p = self.param
         return p.D_sol_ref * math.exp(-p.Ea_D_sol / p.R * (1.0 / T - 1.0 / p.T_ref))
 
-    def compute_eta_sei(self, U_n: float, j_int: float, j0_n: float, T: float) -> float:
+    def compute_eta_sei(self, U_n: float, j_int: float, j0_n: float, L_sei: float, T: float) -> float:
         p = self.param
         if j0_n <= 0:
             raise ValueError("j0_n must be positive")
         eta_int = 2.0 * p.R * T / p.F * math.asinh(j_int / (2.0 * j0_n))
-        return U_n + eta_int - p.U_sei
+
+        #!!!!!!!!!!!!!! Омічний опір
+        return U_n + eta_int - p.U_sei - j_int * L_sei * p.resistivity
 
     def compute_j_rl(self, T: float, eta_sei: float) -> float:
         p = self.param
@@ -408,6 +415,7 @@ class SEIGrowth:
     def solve_j_sei(self, U_n: float, j0_n: float, j_tot: float, T: float, L_sei: float) -> tuple[float, float]:
         p = self.param
         return _solve_j_sei_numba(
+            R_sei=float(p.resistivity),
             U_n=float(U_n),
             j0_n=float(j0_n),
             j_tot=float(j_tot),
