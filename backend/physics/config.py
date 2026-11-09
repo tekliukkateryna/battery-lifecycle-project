@@ -12,9 +12,9 @@ class BatteryGeometry:
     N_r_p: int = 10
 
     # Zone thicknesses [m]
-    L_n: float = 80e-6
+    L_n: float = 100e-6
     L_s: float = 25e-6
-    L_p: float = 80e-6
+    L_p: float = 100e-6
 
     L_x: float = 0.137
     L_y: float = 0.207
@@ -47,8 +47,8 @@ class BatteryGeometry:
                 raise ValueError(f"{name} must be a multiple of dx")
 
     # Particle radii [m]
-    R_n: float = 10e-6
-    R_p: float = 10e-6
+    R_n: float = 1e-05
+    R_p: float = 1e-05
 
     # Porosity (volume fraction of liquid electrolyte)
     eps_n: float = 0.3
@@ -183,9 +183,11 @@ class BatteryParameters:
 
     # SEI Degradation Parameters
     k_sei_ref: float = 1e-12  # Reaction constant [m/s]
-    M_sei: float = 0.162  # Molar mass [kg/mol]
-    rho_sei: float = 2100.0  # Density [kg/m³]
-    L_sei_init: float = 5e-09  # SEI initial Thickness [m]
+    #rho_sei: float = 2100.0  # Density [kg/m³]
+    M_sei: float = 0.162                     # [kg/mol] (PyBaMM значення)
+    Vm_sei: float = 9.585e-05                # [m³/mol]
+    rho_sei: float = M_sei / Vm_sei          # ≈ 1690.14 kg/m³
+    L_sei_init: float = 5e-9  # SEI initial Thickness [m]
     T_ref: float = 298.15       # [K]
 
     D_sol_ref: float = 2.5e-22      # [m²/s]
@@ -194,8 +196,10 @@ class BatteryParameters:
 
     U_sei: float = 0.4        # [V], provisional
     alpha_sei: float = 0.5    # [-]
-    c_sol_e: float = 4500.0   # [mol/m³], provisional
-    sigma_sei: float = 5e-6
+    # Bulk solvent concentration [mol.m-3]
+    c_sol_e: float = 4541.0   # [mol/m³], provisional
+    resistivity: float = 200000
+    sigma_sei = 1 / resistivity
     # SEI formation stoichiometry
     n_sei: float = 1.0        # [mol e- / mol SEI product]
 

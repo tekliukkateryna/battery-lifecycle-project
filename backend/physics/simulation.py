@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.integrate import solve_ivp
+from scipy.sparse import lil_matrix
 
 from backend.physics.physics import (
     SolidDiffusion,
@@ -49,6 +50,59 @@ class BatterySimulation:
         self.atol[self.i_L] = 1e-13
         self.atol[self.i_Q] = 1e-9
 
+        # Побудова та кешування спарсивної маски Якобіана
+        self.jac_sparsity = self._build_jac_sparsity()
+
+    def _build_jac_sparsity(self):
+        n = self.n_states
+        J = lil_matrix((n, n), dtype=int)
+
+        n_n = self.geo.N_r_n
+        for i in range(n_n):
+            J[i, i] = 1
+            if i > 0: J[i, i - 1] = 1
+            if i < n_n - 1: J[i, i + 1] = 1
+            J[i, self.i_T] = 1
+
+        for col in range(self.geo.N_x_n):
+            J[n_n - 1, self.s_e.start + col] = 1
+        J[n_n - 1, self.i_L] = 1
+
+        n_p = self.geo.N_r_p
+        off_p = self.s_p.start
+        for i in range(n_p):
+            idx = off_p + i
+            J[idx, idx] = 1
+            if i > 0: J[idx, idx - 1] = 1
+            if i < n_p - 1: J[idx, idx + 1] = 1
+            J[idx, self.i_T] = 1
+
+        n_e = self.geo.N_x_total
+        off_e = self.s_e.start
+        for i in range(n_e):
+            idx = off_e + i
+            J[idx, idx] = 1
+            if i > 0: J[idx, idx - 1] = 1
+            if i < n_e - 1: J[idx, idx + 1] = 1
+            J[idx, self.i_T] = 1
+
+
+        J[self.i_T, self.s_n.start + n_n - 1] = 1
+        J[self.i_T, self.s_p.start + n_p - 1] = 1
+        for col in range(n_e):
+            J[self.i_T, off_e + col] = 1
+        J[self.i_T, self.i_T] = 1
+        J[self.i_T, self.i_L] = 1
+
+        for row in (self.i_L, self.i_Q):
+            J[row, self.s_n.start + n_n - 1] = 1
+            for col in range(self.geo.N_x_n):
+                J[row, off_e + col] = 1
+            J[row, self.i_T] = 1
+            J[row, self.i_L] = 1
+
+        return J.tocsc()
+
     @property
     def i_app(self):
         return self.sim.I_app / self.geo.A_cell
@@ -70,13 +124,13 @@ class BatterySimulation:
 
         return y0
 
-    def _unpack(self, y):
+    def _unpack(self, y: np.ndarray):
         return (
             y[self.s_n], y[self.s_p], y[self.s_e],
             float(y[self.i_T]), float(y[self.i_L]), float(y[self.i_Q]),
         )
 
-    def _sei_current(self, c_s_n, c_e, T, L_sei):
+    def _sei_current(self, c_s_n: np.ndarray, c_e: np.ndarray, T: float, L_sei: float):
         
         if not self.enable_sei:
             return 0.0, 0.0
@@ -98,7 +152,7 @@ class BatterySimulation:
         )
 
 
-    def _temperature_derivative(self, c_s_n, c_s_p, c_e, T, L_sei, j_sei):
+    def _temperature_derivative(self, c_s_n: np.ndarray, c_s_p: np.ndarray, c_e: np.ndarray, T: float, L_sei: float, j_sei: float):
 
         if not self.enable_thermal:
             return 0.0
@@ -193,9 +247,9 @@ class BatterySimulation:
             method="BDF",
             t_eval=times,
             events=event,
-            rtol=1e-5,
+            rtol=1e-6,
             atol=self.atol,
-            max_step=300.0,
+            max_step=60.0,
         )
 
         if not sol.success:
@@ -225,7 +279,7 @@ class BatterySimulation:
         return sol
 
 
-    def run(self, t_final=None, num_points=201):
+    '''def run(self, t_final=None, num_points=201):
 
         end = float(
             self.sim.t_final if t_final is None else t_final
@@ -239,7 +293,7 @@ class BatterySimulation:
             t_end=end,
             y0=self.initial_state(),
             num_points=num_points,
-        )
+        )'''
 
 
     def diagnostics(self, sol):
@@ -261,7 +315,7 @@ class BatterySimulation:
             "sei_thickness_m": sol.y[self.i_L],
             "capacity_loss_Ah": sol.y[self.i_Q] / 3600.0,
             "j_sei_A_m2": j_sei_values,
-        } 
+        }
 
 
     def run_cycles(
