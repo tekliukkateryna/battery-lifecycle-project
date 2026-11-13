@@ -126,23 +126,9 @@ class BatterySimulation:
 
     def _sei_current(self, c_s_n: np.ndarray, c_e: np.ndarray, T: float, L_sei: float):
         if not self.enable_sei:
-            return 0.0, 0.0
+            return 0.0
 
-        p, g = self.param, self.geo
-        theta_n = c_s_n[-1] / p.c_n_max
-        U_n = p.OCV_n(theta_n)
-        j0_n = self.voltage.compute_j0_x(
-            c_e[:g.N_x_n], c_s_n[-1], p.K_n, p.c_n_max
-        )
-        j_tot_n = self.i_app / (p.get_b_n(g) * g.L_n)
-
-        return self.sei.solve_j_sei(
-            U_n=U_n,
-            j0_n=j0_n,
-            j_tot=j_tot_n,
-            T=T,
-            L_sei=L_sei
-        )
+        return self.sei.compute_j_dl(T, L_sei)
 
     def _temperature_derivative(self, c_s_n: np.ndarray, c_s_p: np.ndarray, c_e: np.ndarray, T: float, L_sei: float, j_sei: float):
         if not self.enable_thermal:
@@ -164,7 +150,7 @@ class BatterySimulation:
     def _rhs(self, t, y):
         c_s_n, c_s_p, c_e, T, L_sei, _ = self._unpack(y)
 
-        j_sei, _ = self._sei_current(c_s_n, c_e, T, L_sei)
+        j_sei = self._sei_current(c_s_n, c_e, T, L_sei)
 
         dy = np.zeros_like(y)
         dy[self.s_n] = self.solid_n.compute_derivatives(c_s_n, self.i_app, T, j_sei)
@@ -186,7 +172,7 @@ class BatterySimulation:
 
     def _terminal_voltage(self, y):
         c_s_n, c_s_p, c_e, T, L_sei, _ = self._unpack(y)
-        j_sei, _ = self._sei_current(c_s_n, c_e, T, L_sei)
+        j_sei = self._sei_current(c_s_n, c_e, T, L_sei)
 
         return float(self.voltage.calculate(
             c_s_n, c_s_p, c_e, self.i_app, T,
@@ -277,7 +263,7 @@ class BatterySimulation:
         j_sei_values = np.empty(sol.t.size)
         for i in range(sol.t.size):
             c_s_n, c_s_p, c_e, T, L_sei, _ = self._unpack(sol.y[:, i])
-            j_sei, _ = self._sei_current(c_s_n, c_e, T, L_sei)
+            j_sei = self._sei_current(c_s_n, c_e, T, L_sei)
             voltage[i] = self.voltage.calculate(
                 c_s_n, c_s_p, c_e, self.i_app, T,
                 L_sei if self.enable_sei else 0.0,

@@ -67,67 +67,6 @@ def _electrolyte_diffusion_rhs_numba(
 
     return dc_e_dt
 
-
-@njit(fastmath=True)
-def _solve_j_sei_numba(
-    U_n: float,
-    j0_n: float,
-    j_tot: float,
-    T: float,
-    L_sei: float,
-    R: float,
-    F: float,
-    k_sei_ref: float,
-    Ea_k_sei: float,
-    T_ref: float,
-    D_sol_ref: float,
-    Ea_D_sol: float,
-    alpha_sei: float,
-    c_sol_e: float,
-    U_sei: float,
-    R_sei: float,
-) -> tuple[float, float]:
-    k_sei = k_sei_ref * math.exp(-Ea_k_sei / R * (1.0 / T - 1.0 / T_ref))
-    D_sol = D_sol_ref * math.exp(-Ea_D_sol / R * (1.0 / T - 1.0 / T_ref))
-
-    j_dl = -F * D_sol * c_sol_e / L_sei
-
-    low = j_dl
-    high = 0.0
-    mid = 0.0
-
-    for _ in range(50):
-        mid = 0.5 * (low + high)
-        j_int = j_tot - mid
-        
-        val = j_int / (2.0 * j0_n)
-        eta_int = 2.0 * R * T / F * math.asinh(val)
-        #!!!!!!!!!!!!!!!!! Омічний опір
-        eta_sei = U_n + eta_int - U_sei - j_int * L_sei * R_sei
-        
-        exponent = -alpha_sei * F * eta_sei / (R * T)
-        if exponent > 100.0:
-            exponent = 100.0
-        elif exponent < -100.0:
-            exponent = -100.0
-            
-        j_rl = -F * k_sei * c_sol_e * math.exp(exponent)
-        j_model = (j_rl * j_dl) / (j_rl + j_dl)
-        
-        if mid - j_model > 0.0:
-            high = mid
-        else:
-            low = mid
-
-    j_int = j_tot - mid
-    val = j_int / (2.0 * j0_n)
-    eta_int = 2.0 * R * T / F * math.asinh(val)
-    #!!!!!!!!!!!!!!!!! Омічний опір
-    eta_sei = U_n + eta_int - U_sei - j_int * L_sei * R_sei
-
-    return mid, eta_sei
-
-
 class SolidDiffusion:
 
     def __init__(self, geo: BatteryGeometry, param: BatteryParameters, sim: SimulationConfig, electrode):
@@ -375,30 +314,9 @@ class SEIGrowth:
     def __init__(self, param):
         self.param = param
 
-    def compute_k_sei(self, T: float) -> float:
-        p = self.param
-        return p.k_sei_ref * math.exp(-p.Ea_k_sei / p.R * (1.0 / T - 1.0 / p.T_ref))
-
     def compute_D_sol(self, T: float) -> float:
         p = self.param
         return p.D_sol_ref * math.exp(-p.Ea_D_sol / p.R * (1.0 / T - 1.0 / p.T_ref))
-
-    def compute_eta_sei(self, U_n: float, j_int: float, j0_n: float, L_sei: float, T: float) -> float:
-        p = self.param
-        if j0_n <= 0:
-            raise ValueError("j0_n must be positive")
-        eta_int = 2.0 * p.R * T / p.F * math.asinh(j_int / (2.0 * j0_n))
-
-        #!!!!!!!!!!!!!! Омічний опір
-        return U_n + eta_int - p.U_sei - j_int * L_sei * p.resistivity
-
-    def compute_j_rl(self, T: float, eta_sei: float) -> float:
-        p = self.param
-        k_sei = self.compute_k_sei(T)
-        exponent = -p.alpha_sei * p.F * eta_sei / (p.R * T)
-        if exponent > 100.0: exponent = 100.0
-        elif exponent < -100.0: exponent = -100.0
-        return -p.F * k_sei * p.c_sol_e * math.exp(exponent)
 
     def compute_j_dl(self, T: float, L_sei: float) -> float:
         p = self.param
@@ -406,32 +324,6 @@ class SEIGrowth:
             raise ValueError("L_sei must be positive")
         D_sol = self.compute_D_sol(T)
         return -p.F * D_sol * p.c_sol_e / L_sei
-
-    def compute_j_sei(self, T: float, eta_sei: float, L_sei: float) -> float:
-        j_rl = self.compute_j_rl(T, eta_sei)
-        j_dl = self.compute_j_dl(T, L_sei)
-        return j_rl * j_dl / (j_rl + j_dl)
-
-    def solve_j_sei(self, U_n: float, j0_n: float, j_tot: float, T: float, L_sei: float) -> tuple[float, float]:
-        p = self.param
-        return _solve_j_sei_numba(
-            R_sei=float(p.resistivity),
-            U_n=float(U_n),
-            j0_n=float(j0_n),
-            j_tot=float(j_tot),
-            T=float(T),
-            L_sei=float(L_sei),
-            R=float(p.R),
-            F=float(p.F),
-            k_sei_ref=float(p.k_sei_ref),
-            Ea_k_sei=float(p.Ea_k_sei),
-            T_ref=float(p.T_ref),
-            D_sol_ref=float(p.D_sol_ref),
-            Ea_D_sol=float(p.Ea_D_sol),
-            alpha_sei=float(p.alpha_sei),
-            c_sol_e=float(p.c_sol_e),
-            U_sei=float(p.U_sei),
-        )
 
     def compute_derivatives(self, j_sei: float, A_active: float) -> tuple[float, float]:
         p = self.param

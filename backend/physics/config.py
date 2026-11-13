@@ -182,27 +182,23 @@ class BatteryParameters:
     dUeq_dT: float = -0.4e-3
 
     # SEI Degradation Parameters
-    k_sei_ref: float = 1e-12  # Reaction constant [m/s]
-    #rho_sei: float = 2100.0  # Density [kg/m³]
     M_sei: float = 0.162                     # [kg/mol] (PyBaMM значення)
     Vm_sei: float = 9.585e-05                # [m³/mol]
     rho_sei: float = M_sei / Vm_sei          # ≈ 1690.14 kg/m³
     L_sei_init: float = 5e-9  # SEI initial Thickness [m]
     T_ref: float = 298.15       # [K]
 
-    #D_sol_ref: float = 2.5e-22      # [m²/s]
-    D_sol_ref: float = 2e-18 
+    D_sol_ref: float = 2.5e-22 
     Ea_k_sei: float = 40000.0       # [J/mol]
     Ea_D_sol: float = 67000.0       # [J/mol]
 
     U_sei: float = 0.4        # [V], provisional
-    alpha_sei: float = 0.5    # [-]
     # Bulk solvent concentration [mol.m-3]
-    c_sol_e: float = 4541.0   # [mol/m³], provisional
+    c_sol_e: float = 2636.0   # [mol/m³], provisional
     resistivity: float = 200000
     sigma_sei = 1 / resistivity
     # SEI formation stoichiometry
-    n_sei: float = 2        # [mol e- / mol SEI product]
+    n_sei: float = 1        # [mol e- / mol SEI product]
 
     # Dynamic calculations of specific geometries
     def get_b_n(self, geo: BatteryGeometry) -> float:
