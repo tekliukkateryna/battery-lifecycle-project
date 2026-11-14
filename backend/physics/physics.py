@@ -42,7 +42,7 @@ def _solid_diffusion_rhs_numba(
 @njit(fastmath=True)
 def _electrolyte_diffusion_rhs_numba(
     c_e: np.ndarray,
-    D_e_bulk: float,
+    D_e_faces: np.ndarray,
     dx: float,
     B_faces: np.ndarray,
     eps: np.ndarray,
@@ -58,7 +58,7 @@ def _electrolyte_diffusion_rhs_numba(
     J_full[N_total] = 0.0
 
     for i in range(1, N_total):
-        J_full[i] = -D_e_bulk * B_faces[i - 1] * (c_e[i] - c_e[i - 1]) / dx
+        J_full[i] = -D_e_faces[i - 1] * B_faces[i - 1] * (c_e[i] - c_e[i - 1]) / dx
 
     for i in range(N_total):
         diff = (J_full[i] - J_full[i + 1]) / dx
@@ -102,8 +102,7 @@ def _solve_j_sei_numba(
         
         val = j_int / (2.0 * j0_n)
         eta_int = 2.0 * R * T / F * math.asinh(val)
-        #!!!!!!!!!!!!!!!!! Омічний опір
-        eta_sei = U_n + eta_int - U_sei - j_int * L_sei * R_sei
+        eta_sei = U_n + eta_int - U_sei
         
         exponent = -alpha_sei * F * eta_sei / (R * T)
         if exponent > 100.0:
@@ -122,8 +121,8 @@ def _solve_j_sei_numba(
     j_int = j_tot - mid
     val = j_int / (2.0 * j0_n)
     eta_int = 2.0 * R * T / F * math.asinh(val)
-    #!!!!!!!!!!!!!!!!! Омічний опір
-    eta_sei = U_n + eta_int - U_sei - j_int * L_sei * R_sei
+    
+    eta_sei = U_n + eta_int - U_sei
 
     return mid, eta_sei
 
@@ -240,15 +239,16 @@ class ElectrolyteDiffusionSPMe:
         geo = self.geo
         param = self.param
 
-        D_e_bulk = param.D_e_ref * math.exp(
-            -(param.Ea_De / param.R) * (1.0 / T - 1.0 / 298.15)
+        # OKane2022 - electrolyte D now depends on concentration and T
+        D_e_faces = param.electrolyte_diffusivity(
+            0.5 * (c_e[:-1] + c_e[1:]), T
         )
 
         j_x = self.compute_j_x(i_app)
 
         return _electrolyte_diffusion_rhs_numba(
             c_e=c_e,
-            D_e_bulk=D_e_bulk,
+            D_e_faces=D_e_faces,
             dx=geo.dx,
             B_faces=self.B_faces,
             eps=self.eps,
@@ -286,10 +286,10 @@ class TerminalVoltage:
         j_p = -i_app / (self._b_p * geo.L_p)
 
         j_n0 = self.compute_j0_x(
-            c_e[:geo.N_x_n], c_s_n[-1], param.K_n, param.c_n_max
+            c_e[:geo.N_x_n], c_s_n[-1], param.K_n(T), param.c_n_max
         )
         j_p0 = self.compute_j0_x(
-            c_e[geo.N_x_n + geo.N_x_s:], c_s_p[-1], param.K_p, param.c_p_max
+            c_e[geo.N_x_n + geo.N_x_s:], c_s_p[-1], param.K_p(T), param.c_p_max
         )
 
         return (
@@ -306,8 +306,10 @@ class TerminalVoltage:
             c_e[:g.N_x_n].mean() - c_e[g.N_x_n + g.N_x_s:].mean()
         )
 
-    def dphi_e(self, i_app: float): 
-        return i_app / self.param.sigma_e * (
+    def dphi_e(self, i_app: float, c_e: np.ndarray, T: float):
+        
+        sigma_eff = float(self.param.electrolyte_conductivity(c_e.mean(), T))
+        return i_app / sigma_eff * (
             self.geo.L_n / (3 * self.geo.B_n) + self.geo.L_s / self.geo.B_s + self.geo.L_p / (3 * self.geo.B_p)
         )
     
@@ -317,7 +319,6 @@ class TerminalVoltage:
         )
 
     def dphi_f(self, i_app: float, L_sei: float) -> float:
-        # return 0
         
         return (
             i_app * L_sei
@@ -329,7 +330,7 @@ class TerminalVoltage:
             self.Ueq(c_s_n, c_s_p)
             - self.eta_r(c_e, c_s_n, c_s_p, i_app, T, j_sei)
             - self.eta_c(c_e, T)
-            - self.dphi_e(i_app)
+            - self.dphi_e(i_app, c_e, T)
             - self.dphi_s(i_app)
             - self.dphi_f(i_app, L_sei)
         )
@@ -389,8 +390,7 @@ class SEIGrowth:
             raise ValueError("j0_n must be positive")
         eta_int = 2.0 * p.R * T / p.F * math.asinh(j_int / (2.0 * j0_n))
 
-        #!!!!!!!!!!!!!! Омічний опір
-        return U_n + eta_int - p.U_sei - j_int * L_sei * p.resistivity
+        return U_n + eta_int - p.U_sei
 
     def compute_j_rl(self, T: float, eta_sei: float) -> float:
         p = self.param
@@ -435,6 +435,6 @@ class SEIGrowth:
 
     def compute_derivatives(self, j_sei: float, A_active: float) -> tuple[float, float]:
         p = self.param
-        dL_sei_dt = -p.M_sei * j_sei / (p.n_sei * p.F * p.rho_sei)
+        dL_sei_dt = -p.Vm_sei * j_sei / (p.n_sei * p.F)
         dQ_LLI_dt = -A_active * j_sei
         return float(dL_sei_dt), float(dQ_LLI_dt)

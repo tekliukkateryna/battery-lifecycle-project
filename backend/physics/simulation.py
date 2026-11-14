@@ -132,7 +132,7 @@ class BatterySimulation:
         theta_n = c_s_n[-1] / p.c_n_max
         U_n = p.OCV_n(theta_n)
         j0_n = self.voltage.compute_j0_x(
-            c_e[:g.N_x_n], c_s_n[-1], p.K_n, p.c_n_max
+            c_e[:g.N_x_n], c_s_n[-1], p.K_n(T), p.c_n_max
         )
         j_tot_n = self.i_app / (p.get_b_n(g) * g.L_n)
 
@@ -302,6 +302,8 @@ class BatterySimulation:
         points_per_phase=11,
         V_max=None,
         V_min=None,
+        pre_discharge=True,
+        pre_discharge_max_time=10800.0,
     ):
         if current is None:
             current = self.sim.I_app
@@ -332,6 +334,27 @@ class BatterySimulation:
         original_current = self.sim.I_app
 
         try:
+            # Optional formation/preconditioning step for an initially charged
+            # LG M50. It is NOT counted as one of the simulated cycles.
+            if pre_discharge:
+                self.sim.I_app = current
+                V_start = self._terminal_voltage(y)
+                if V_start < V_min:
+                    raise RuntimeError(
+                        f"Pre-discharge starts below lower cutoff: {V_start:.4f} V"
+                    )
+                if V_start > V_min:
+                    prep = self._integrate_interval(
+                        t_start=t,
+                        t_end=t + pre_discharge_max_time,
+                        y0=y,
+                        num_points=points_per_phase,
+                        voltage_cutoff=V_min,
+                        direction=-1,
+                    )
+                    y = prep.y[:, -1].copy()
+                    t = float(prep.t[-1])
+
             for cycle in range(1, n_cycles + 1):
                 phases = [
                     ("charge", -current,
