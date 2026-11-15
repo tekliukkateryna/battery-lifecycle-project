@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="uk" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BATT-SIM 3D // Інтерактивна 3D-симуляція Акумулятора</title>
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Core Libraries via CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-wrapper">
+    <!-- Top Navigation / Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="7" width="16" height="10" rx="2" ry="2"></rect>
+            <line x1="22" y1="11" x2="22" y2="13"></line>
+            <line x1="6" y1="11" x2="6" y2="13"></line>
+            <line x1="10" y1="11" x2="10" y2="13"></line>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>BATT-SIM <span>3D</span></h1>
+          <p class="brand-subtitle">Interactive Battery Lifecycle & Digital Twin Lab</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div class="sim-status-pill" id="sim-main-status">
+          <span class="status-dot"></span>
+          <span class="status-text">СИМУЛЯЦІЯ: ГОТОВА</span>
+        </div>
+        <button id="theme-toggle-btn" class="theme-toggle-btn" aria-label="Перемкнути тему">
+          <span class="icon-sun">☀️</span>
+          <span class="icon-moon">🌙</span>
+          <span class="theme-label">Тема</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace Layout (Two columns Grid) -->
+    <main class="app-layout">
+      
+      <!-- Left Column: 3D Scene Viewport & Overlays -->
+      <section class="viewport-section">
+        <div class="viewport-card">
+          <!-- Three.js Canvas Container -->
+          <div id="canvas-container">
+            <!-- Canvas is injected here -->
+
+            <!-- Floating Status Overlay -->
+            <div id="floating-status" class="floating-status">
+              <div class="floating-header">
+                <div class="badge-group">
+                  <span class="badge mode-badge" id="badge-mode">
+                    <span class="pulse-indicator"></span>
+                    <span id="badge-mode-text">СПОКІЙ</span>
+                  </span>
+                  <span class="badge source-badge" id="badge-source">
+                    <span class="source-icon">⚡</span>
+                    <span id="badge-source-text">Ініціалізація 3D...</span>
+                  </span>
+                </div>
+                <div class="soc-compact">
+                  <span class="soc-label">SoC</span>
+                  <span class="soc-val" id="floating-soc-val">65.0%</span>
+                </div>
+              </div>
+
+              <!-- Live Quick Telemetry Bar -->
+              <div class="telemetry-chips">
+                <div class="chip">
+                  <span class="chip-label">Напруга:</span>
+                  <span class="chip-val" id="chip-voltage">3.78 V</span>
+                </div>
+                <div class="chip">
+                  <span class="chip-label">Струм:</span>
+                  <span class="chip-val" id="chip-current">2.5 A</span>
+                </div>
+                <div class="chip">
+                  <span class="chip-label">Температура:</span>
+                  <span class="chip-val" id="chip-temp">24.5 °C</span>
+                </div>
+                <div class="chip">
+                  <span class="chip-label">Потужність:</span>
+                  <span class="chip-val" id="chip-power">9.45 W</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Viewport Hints & Controls -->
+            <div class="viewport-controls-hint">
+              <span>🖱️ ЛКМ: Обертання</span>
+              <span>•</span>
+              <span>ПКМ: Панорамування</span>
+              <span>•</span>
+              <span>Коліщатко: Масштаб</span>
+            </div>
+
+            <!-- 3D Scene Quick View Actions -->
+            <div class="scene-quick-actions">
+              <button class="btn-icon" id="btn-camera-reset" title="Скинути камеру">⟲ Вигляд</button>
+              <button class="btn-icon" id="btn-toggle-wire" title="Перемкнути провідники">⚡ Провід</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Control Panel & Realtime Telemetry Chart -->
+      <aside class="sidebar-section">
+        
+        <!-- Simulation Control Card -->
+        <div class="card control-card">
+          <div class="card-header">
+            <h2>Панель Керування</h2>
+            <span class="card-tag">Realtime Engine</span>
+          </div>
+
+          <div class="card-body">
+            <!-- Mode Selection Segmented Control -->
+            <div class="form-group">
+              <label class="group-label">Режим роботи акумулятора</label>
+              <div class="segmented-control" role="radiogroup" aria-label="Режим роботи">
+                <button type="button" class="segment-btn active" data-mode="idle" id="btn-mode-idle">
+                  <span class="segment-icon">⏸️</span>
+                  <span>Спокій</span>
+                </button>
+                <button type="button" class="segment-btn" data-mode="charge" id="btn-mode-charge">
+                  <span class="segment-icon">⚡</span>
+                  <span>Заряд</span>
+                </button>
+                <button type="button" class="segment-btn" data-mode="discharge" id="btn-mode-discharge">
+                  <span class="segment-icon">🔋</span>
+                  <span>Розряд</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Range Sliders: Current & Temperature -->
+            <div class="sliders-grid">
+              <!-- Current Slider -->
+              <div class="slider-group">
+                <div class="slider-header">
+                  <label for="slider-current">
+                    <span class="slider-title">Струм навантаження / заряду</span>
+                    <span class="slider-unit">(A)</span>
+                  </label>
+                  <span class="slider-badge" id="val-current">2.5 A</span>
+                </div>
+                <div class="slider-track-wrap">
+                  <input type="range" id="slider-current" min="0" max="10" step="0.1" value="2.5" class="custom-range range-current">
+                  <div class="slider-ticks">
+                    <span>0A</span>
+                    <span>2.5A</span>
+                    <span>5A</span>
+                    <span>7.5A</span>
+                    <span>10A</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Temperature Slider -->
+              <div class="slider-group">
+                <div class="slider-header">
+                  <label for="slider-temp">
+                    <span class="slider-title">Температура комірки</span>
+                    <span class="slider-unit">(°C)</span>
+                  </label>
+                  <span class="slider-badge" id="val-temp">25.0 °C</span>
+                </div>
+                <div class="slider-track-wrap">
+                  <input type="range" id="slider-temp" min="0" max="60" step="0.5" value="25" class="custom-range range-temp">
+                  <div class="slider-ticks">
+                    <span>0°C</span>
+                    <span>15°C</span>
+                    <span>30°C</span>
+                    <span>45°C</span>
+                    <span>60°C</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Action Buttons: Start, Pause, Reset -->
+            <div class="actions-group">
+              <button type="button" class="btn btn-primary" id="btn-start">
+                <svg viewBox="0 0 24 24" fill="currentColor" class="btn-icon-svg">
+                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                <span>Запустити</span>
+              </button>
+              
+              <button type="button" class="btn btn-secondary" id="btn-pause">
+                <svg viewBox="0 0 24 24" fill="currentColor" class="btn-icon-svg">
+                  <rect x="6" y="4" width="4" height="16"></rect>
+                  <rect x="14" y="4" width="4" height="16"></rect>
+                </svg>
+                <span>Пауза</span>
+              </button>
+
+              <button type="button" class="btn btn-danger" id="btn-reset">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-svg">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                  <path d="M3 3v5h5"></path>
+                </svg>
+                <span>Скинути</span>
+              </button>
+            </div>
+
+            <!-- Realtime SoC Progress Bar -->
+            <div class="soc-progress-container">
+              <div class="soc-progress-header">
+                <span class="soc-progress-title">Рівень заряду (State of Charge):</span>
+                <span class="soc-progress-value" id="soc-bar-text">65.0%</span>
+              </div>
+              <div class="soc-progress-track">
+                <div class="soc-progress-fill" id="soc-bar-fill" style="width: 65%;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Telemetry & Chart Card -->
+        <div class="card telemetry-card">
+          <div class="card-header">
+            <div>
+              <h2>Телеметрія та Графік Заряду</h2>
+              <p class="chart-subtitle">Динамічна крива SoC (%) у реальному часі</p>
+            </div>
+            <div class="chart-stats-badge" id="chart-rate-badge">0.00 %/с</div>
+          </div>
+
+          <div class="card-body chart-body">
+            <div class="chart-canvas-wrapper">
+              <canvas id="telemetryChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+      </aside>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>3D Battery Lifecycle Platform • Three.js WebGL & Chart.js Engine</p>
+      <div class="footer-pills">
+        <span class="footer-pill">WebGL 2.0</span>
+        <span class="footer-pill">DRACO Decompression</span>
+        <span class="footer-pill">CatmullRom Electron Physics</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Application Logic -->
+  <script src="app.js"></script>
+</body>
+</html>
