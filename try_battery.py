@@ -20,8 +20,8 @@ start_time = time.perf_counter()
 # 1000 cycles
 data = model.run_cycles(
     n_cycles = 1000,
-    charge_time = 3 * 3600.0,
-    discharge_time = 3 * 3600.0,
+    charge_time = 4 * 3600.0,
+    discharge_time = 4 * 3600.0,
 )
 
 summary = data["cycle_summary"]

@@ -159,7 +159,7 @@ class BatteryParameters:
     alpha_sei: float = 0.5
     L_sei_init: float = 5e-9
     Vm_sei: float = 9.585e-5           # [m3/mol SEI]
-    n_sei: float = 1.0                 
+    n_sei: float = 2.0                 
     resistivity: float = 200000.0     # [Ohm*m]
 
     @property
@@ -224,7 +224,7 @@ class BatteryParameters:
 
 @dataclass
 class SimulationConfig:
-    I_app: float = 5                   # [A] 1C for nominal 5-Ah LG M50
+    I_app: float = 1.5                   # [A] 1C for nominal 5-Ah LG M50
     t_final: float = 3600.0
 
     theta_n_init: float = 29866.0 / 33133.0

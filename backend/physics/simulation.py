@@ -303,7 +303,7 @@ class BatterySimulation:
         V_max=None,
         V_min=None,
         pre_discharge=True,
-        pre_discharge_max_time=10800.0,
+        pre_discharge_max_time=4 * 3600.0,
     ):
         if current is None:
             current = self.sim.I_app
