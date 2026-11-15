@@ -288,6 +288,7 @@ class BatterySimulation:
         points_per_phase=11,
         V_max=None,
         V_min=None,
+        pre_discharge=True,
     ):
         if current is None:
             current = self.sim.I_app
@@ -318,6 +319,19 @@ class BatterySimulation:
         original_current = self.sim.I_app
 
         try:
+            if pre_discharge:
+                # Conditioning discharge; not counted as an ageing cycle.
+                self.sim.I_app = current
+                pre_sol = self._integrate_interval(
+                    t_start=t,
+                    t_end=t + discharge_time,
+                    y0=y,
+                    num_points=points_per_phase,
+                    voltage_cutoff=V_min,
+                    direction=-1,
+                )
+                y = pre_sol.y[:, -1].copy()
+                t = float(pre_sol.t[-1])
             for cycle in range(1, n_cycles + 1):
                 phases = [
                     ("charge", -current,
