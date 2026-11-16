@@ -205,6 +205,8 @@ class BatteryParameters:
 class SimulationConfig:
 
     I_app: float = 5.0           # [A]
+    I_charge: float = 1.5
+    I_discharge: float = 5.0
     t_final: float = 3600.0
 
     theta_n_init: float = 0.9013973983641687

@@ -51,6 +51,9 @@ class BatterySimulation:
         # Побудова та кешування спарсивної маски Якобіана
         self.jac_sparsity = self._build_jac_sparsity()
 
+        self._last_state = None
+        self._last_time = 0.0
+
     def _build_jac_sparsity(self):
         n = self.n_states
         J = lil_matrix((n, n), dtype=int)
@@ -289,9 +292,9 @@ class BatterySimulation:
         V_max=None,
         V_min=None,
         pre_discharge=True,
+        I_charge = 1.5,
+        I_discharge = 5,
     ):
-        if current is None:
-            current = self.sim.I_app
 
         if V_max is None:
             V_max = self.sim.upper_cut_off_V
@@ -299,7 +302,7 @@ class BatterySimulation:
         if V_min is None:
             V_min = self.sim.lower_cut_off_V
 
-        if n_cycles < 1 or current <= 0:
+        if n_cycles < 1:
             raise ValueError("Invalid cycling parameters")
 
         if charge_time <= 0 or discharge_time <= 0:
@@ -311,90 +314,98 @@ class BatterySimulation:
         if V_min >= V_max:
             raise ValueError("V_min must be below V_max")
 
-        y = self.initial_state()
-        t = 0.0
+        first_run = self._last_state is None
+        if first_run:
+            y = self.initial_state()
+            t = 0.0
+        else:
+            y = self._last_state.copy()
+            t = self._last_time
 
         results = []
         discharge_capacities = []
+        
         original_current = self.sim.I_app
+        original_charge_current = self.sim.I_charge
+        original_discharge_current = self.sim.I_discharge
 
-        try:
-            if pre_discharge:
-                # Conditioning discharge; not counted as an ageing cycle.
-                self.sim.I_app = current
-                pre_sol = self._integrate_interval(
+        if pre_discharge and first_run:
+            # Conditioning discharge; not counted as an ageing cycle.
+            self.sim.I_app = I_discharge
+
+            pre_sol = self._integrate_interval(
+                t_start=t,
+                t_end=t + discharge_time,
+                y0=y,
+                num_points=points_per_phase,
+                voltage_cutoff=V_min,
+                direction=-1,
+            )
+            y = pre_sol.y[:, -1].copy()
+            t = float(pre_sol.t[-1])
+        for cycle in range(1, n_cycles + 1):
+            phases = [
+                ("charge", -I_charge,
+                charge_time, V_max, +1),
+                ("discharge", I_discharge,
+                discharge_time, V_min, -1),
+            ]
+
+            for phase, phase_current, max_duration, cutoff, direction in phases:
+                self.sim.I_app = phase_current
+
+                V_start = self._terminal_voltage(y)
+
+                if direction > 0 and V_start >= cutoff:
+                    raise RuntimeError(
+                        f"Cycle {cycle}: charge starts "
+                        f"at {V_start:.4f} V >= {cutoff} V"
+                    )
+
+                if direction < 0 and V_start <= cutoff:
+                    raise RuntimeError(
+                        f"Cycle {cycle}: discharge starts "
+                        f"at {V_start:.4f} V <= {cutoff} V"
+                    )
+
+                sol = self._integrate_interval(
                     t_start=t,
-                    t_end=t + discharge_time,
+                    t_end=t + max_duration,
                     y0=y,
                     num_points=points_per_phase,
-                    voltage_cutoff=V_min,
-                    direction=-1,
+                    voltage_cutoff=cutoff,
+                    direction=direction,
                 )
-                y = pre_sol.y[:, -1].copy()
-                t = float(pre_sol.t[-1])
-            for cycle in range(1, n_cycles + 1):
-                phases = [
-                    ("charge", -current,
-                    charge_time, V_max, +1),
-                    ("discharge", current,
-                    discharge_time, V_min, -1),
-                ]
 
-                for phase, phase_current, max_duration, cutoff, direction in phases:
-                    self.sim.I_app = phase_current
+                actual_duration = float(sol.t[-1] - t)
 
-                    V_start = self._terminal_voltage(y)
+                diag = self.diagnostics(sol)
 
-                    if direction > 0 and V_start >= cutoff:
-                        raise RuntimeError(
-                            f"Cycle {cycle}: charge starts "
-                            f"at {V_start:.4f} V >= {cutoff} V"
-                        )
+                diag["current_A"] = np.full(
+                    sol.t.size, phase_current
+                )
+                diag["cycle"] = np.full(
+                    sol.t.size, cycle
+                )
+                diag["phase"] = np.full(
+                    sol.t.size, phase
+                )
 
-                    if direction < 0 and V_start <= cutoff:
-                        raise RuntimeError(
-                            f"Cycle {cycle}: discharge starts "
-                            f"at {V_start:.4f} V <= {cutoff} V"
-                        )
+                results.append(diag)
 
-                    sol = self._integrate_interval(
-                        t_start=t,
-                        t_end=t + max_duration,
-                        y0=y,
-                        num_points=points_per_phase,
-                        voltage_cutoff=cutoff,
-                        direction=direction,
+                if phase == "discharge":
+                    Q_dis = (
+                        phase_current
+                        * actual_duration
+                        / 3600.0
                     )
+                    discharge_capacities.append(Q_dis)
 
-                    actual_duration = float(sol.t[-1] - t)
+                y = sol.y[:, -1].copy()
+                t = float(sol.t[-1])
 
-                    diag = self.diagnostics(sol)
 
-                    diag["current_A"] = np.full(
-                        sol.t.size, phase_current
-                    )
-                    diag["cycle"] = np.full(
-                        sol.t.size, cycle
-                    )
-                    diag["phase"] = np.full(
-                        sol.t.size, phase
-                    )
-
-                    results.append(diag)
-
-                    if phase == "discharge":
-                        Q_dis = (
-                            phase_current
-                            * actual_duration
-                            / 3600.0
-                        )
-                        discharge_capacities.append(Q_dis)
-
-                    y = sol.y[:, -1].copy()
-                    t = float(sol.t[-1])
-
-        finally:
-            self.sim.I_app = original_current
+        self.sim.I_app = original_current
 
         capacities = np.array(discharge_capacities)
         Q_reference = capacities[0]
@@ -413,5 +424,8 @@ class BatterySimulation:
             "SOH_percent": SOH,
             "capacity_fade_percent": capacity_fade,
         }
+
+        self._last_state = y.copy()
+        self._last_time = t
 
         return output
