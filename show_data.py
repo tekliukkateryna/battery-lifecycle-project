@@ -67,7 +67,7 @@ for expt in meta_data_dict.keys():
 print("Loaded experiments:", list(data_dict.keys()))
 print("Loaded cells:", list(data_dict['expt 5']['Main'].keys()))
 
-''' expt = 'expt 5'
+expt = 'expt 5'
 
 fig_ageing, ax = plt.subplots(
     2, figsize=(10, 8), sharex=True
@@ -126,7 +126,7 @@ for axis in ax:
 ax[0].legend(fontsize=8, ncol=2)
 
 fig_ageing.tight_layout()
-plt.show() '''
+plt.show()
 
 expt = 'expt 5'
 x_variable = 'Ageing Cycles'

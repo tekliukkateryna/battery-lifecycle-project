@@ -8,7 +8,7 @@ from backend.physics.config import (
     BatteryParameters,
     SimulationConfig,
 )
-from backend.physics.simulation import BatterySimulation
+from backend.physics.simulation_cccc import BatterySimulation
 
 
 def calculate_lithium_balance(sol, model):

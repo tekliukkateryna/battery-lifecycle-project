@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import time
 from backend.physics.config import BatteryGeometry, BatteryParameters, SimulationConfig
-from backend.physics.simulation import BatterySimulation
+from backend.physics.simulation_cccc import BatterySimulation
 
 geo = BatteryGeometry()
 param = BatteryParameters()
