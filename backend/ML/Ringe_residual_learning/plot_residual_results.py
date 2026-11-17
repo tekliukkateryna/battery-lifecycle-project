@@ -1,9 +1,9 @@
 """Plot residual-learning results for LG M50T (Imperial College, experiment 5).
 
-Run from the project root after train_residual_ridge.py:
+Run after train_residual_ridge.py:
     python -m backend.data.plot_residual_results
-    python -m backend.data.plot_residual_results --show
-
+    python -m backend.ML.Ringe_residual_learning.train_residual_ridge
+    
 Reads in the directory containing this script:
     residual_ridge_predictions.csv
 
@@ -28,8 +28,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_INPUT = BASE_DIR / 'residual_ridge_predictions.csv'
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+DATA_DIR = BACKEND_DIR / "ML" / "Ringe_residual_learning"
+
+DEFAULT_INPUT = DATA_DIR / "residual_ridge_predictions.csv"
+
+OUTPUT_DIR = BACKEND_DIR / "results" / "ridge"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 REQUIRED = {
     'cell_id', 'temperature_C', 'cycle',
@@ -202,7 +207,7 @@ def main() -> None:
     args = parser.parse_args()
     path = args.input.expanduser().resolve()
     df = load_predictions(path)
-    out_dir = path.parent
+    out_dir = OUTPUT_DIR
     print(f'Loaded {len(df)} observations, {df.cell_id.nunique()} cells, '
           f'{df.temperature_C.nunique()} temperatures')
     plot_by_temperature(df, out_dir, args.show)

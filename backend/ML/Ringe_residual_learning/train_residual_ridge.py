@@ -22,8 +22,12 @@ import matplotlib.pyplot as plt
 from sklearn.linear_model import Ridge
 import joblib
 
-DATA_DIR = Path(__file__).resolve().parent
+DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 INPUT = DATA_DIR / "residual_learning_dataset.csv"
+OUTPUT_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR_PLOT = Path(__file__).resolve().parents[2] / "results" / "ridge"
+OUTPUT_DIR_PLOT.mkdir(parents=True, exist_ok=True)
+
 ALPHA = 0.01  # Chosen beforehand, not optimized on test batteries
 
 REQUIRED = {"cell_id", "temperature_C", "cycle", "soh_exp", "soh_model"}
@@ -99,14 +103,14 @@ def main():
     print(f"  Hybrid model:   {np.abs(scored['error_hybrid_pp']).mean():.4f} pp")
     print(f"  Max hybrid absolute error: {np.abs(scored['error_hybrid_pp']).max():.4f} pp")
 
-    data.to_csv(DATA_DIR / "residual_ridge_predictions.csv", index=False)
-    metrics.to_csv(DATA_DIR / "residual_ridge_metrics.csv", index=False)
+    data.to_csv(OUTPUT_DIR / "residual_ridge_predictions.csv", index=False)
+    metrics.to_csv(OUTPUT_DIR / "residual_ridge_metrics.csv", index=False)
 
     # Fit a deployment candidate only AFTER cross-validation, on all cells.
     # Do not treat this in-sample fit as the quality estimate.
     final_model = Ridge(alpha=ALPHA, fit_intercept=False)
     final_model.fit(make_features(data), data["residual"])
-    joblib.dump(final_model, DATA_DIR / "residual_ridge_model.joblib")
+    joblib.dump(final_model, OUTPUT_DIR / "residual_ridge_model.joblib")
 
     fig, axs = plt.subplots(1, 3, figsize=(15, 4.7), sharey=True)
     colors = {10: "tab:blue", 25: "tab:green", 40: "tab:red"}
@@ -127,7 +131,7 @@ def main():
     axs[0].set_ylabel("SoH (%)")
     fig.suptitle("Imperial College vs SPMe and out-of-cell Ridge correction")
     fig.tight_layout()
-    fig.savefig(DATA_DIR / "residual_ridge_comparison.png", dpi=180)
+    fig.savefig(OUTPUT_DIR_PLOT / "residual_ridge_comparison.png", dpi=180)
     plt.close(fig)
     print(f"\nSaved outputs in {DATA_DIR}")
     print("Note: this tests new cells under the SAME three ageing protocols,")

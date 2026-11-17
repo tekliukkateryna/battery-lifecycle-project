@@ -1,4 +1,3 @@
-
 # Запуск: python -m backend.data.gen_data_3_C10.py
 
 import time
