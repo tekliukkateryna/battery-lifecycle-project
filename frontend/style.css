@@ -607,7 +607,50 @@ body {
   background: var(--accent-amber);
 }
 
-/* Current Input Group */
+/* Current & Temperature Input Groups */
+.temp-control-subbox {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.current-channel-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.4rem 0.5rem;
+  background: rgba(14, 20, 28, 0.45);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.current-channel-group.channel-charge {
+  border-left: 2px solid var(--accent-cyan);
+}
+
+.current-channel-group.channel-discharge {
+  border-left: 2px solid var(--accent-amber);
+}
+
+.param-label-charge {
+  color: var(--accent-cyan);
+}
+
+.readout-charge {
+  color: var(--accent-cyan);
+}
+
+.param-label-discharge {
+  color: var(--accent-amber);
+}
+
+.readout-discharge {
+  color: var(--accent-amber);
+}
+
 .current-input-wrapper {
   display: flex;
   align-items: center;
@@ -633,6 +676,18 @@ body {
   border: 1px solid #ffffff;
   border-radius: 2px;
   cursor: pointer;
+}
+
+.range-charge::-webkit-slider-thumb {
+  background: var(--accent-cyan);
+}
+
+.range-discharge::-webkit-slider-thumb {
+  background: var(--accent-amber);
+}
+
+.range-temp::-webkit-slider-thumb {
+  background: var(--accent-emerald);
 }
 
 .current-stepper {
@@ -938,3 +993,39 @@ body {
   border-radius: 2px;
   border: 1px solid var(--border-subtle);
 }
+
+/* Native lifecycle integration: reuse the existing protocol card + telemetry column. */
+.lifecycle-inline-controls {
+  display: flex; flex-wrap: wrap; align-items: end; gap: 12px;
+  margin-bottom: 11px;
+}
+.lifecycle-inline-controls label {
+  display: flex; flex-direction: column; gap: 5px;
+  color: var(--text-muted); font: 600 0.66rem var(--font-mono);
+  letter-spacing: 0.03em;
+}
+.lifecycle-inline-controls input[type="number"],
+.lifecycle-inline-controls select {
+  background: var(--bg-input); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); color: var(--text-main);
+  padding: 7px 8px; font: 0.76rem var(--font-mono);
+}
+.lifecycle-inline-controls input[type="number"] { width: 83px; }
+.lifecycle-inline-controls .lifecycle-checkbox {
+  flex-direction: row; align-items: center; gap: 6px;
+  padding-bottom: 8px; cursor: pointer;
+}
+.lifecycle-inline-controls input[type="checkbox"] { accent-color: var(--accent-cyan); }
+.telemetry-native-body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.telemetry-native-body .endpoint-status-grid { max-width: none; }
+.telemetry-native-body .contract-spec-box { max-width: none; }
+.telemetry-status-line { color: var(--accent-cyan); font-size: 0.76rem; line-height: 1.55; }
+.lifecycle-summary { padding: 11px; color: var(--text-main); line-height: 1.7; }
+.telemetry-chart-group {
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+  padding: 11px; min-width: 0; background: var(--bg-input);
+}
+.chart-heading { font: 700 0.70rem var(--font-mono); letter-spacing: 0.04em; color: var(--text-main); }
+.chart-legend { margin-top: 5px; color: var(--text-muted); font-size: 0.7rem; }
+.lifecycle-plot { display: block; width: 100%; height: auto; min-height: 140px; margin-top: 8px; }
+.telemetry-disclaimer { font-size: 0.7rem; line-height: 1.6; color: var(--text-muted); }

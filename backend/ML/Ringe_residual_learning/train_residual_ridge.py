@@ -129,7 +129,7 @@ def main():
         ax.grid(alpha=0.25)
         ax.legend(fontsize=7, ncol=1)
     axs[0].set_ylabel("SoH (%)")
-    fig.suptitle("Imperial College vs SPMe and out-of-cell Ridge correction")
+    fig.suptitle("Imperial College vs SPMye and out-of-cell Ridge correction")
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR_PLOT / "residual_ridge_comparison.png", dpi=180)
     plt.close(fig)
