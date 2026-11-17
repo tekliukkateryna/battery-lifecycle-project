@@ -163,7 +163,7 @@ const VISUAL_CALIBRATION = {
       }
 
       // Local Electrochemical Transient Approximation
-      const { mode, current, soc, timeElapsed, delta } = params;
+      const { mode, current, soc, timeElapsed, delta, temperature = 25.0 } = params;
       const speedUp = 25.0; // Interactive acceleration
       const socFraction = Math.max(0.001, Math.min(0.999, soc / 100.0));
 
@@ -171,7 +171,14 @@ const VISUAL_CALIBRATION = {
       const theta_p = 0.915 - 0.64 * socFraction;
       const Ueq = this._ocv_p(theta_p) - this._ocv_n(theta_n);
 
-      const R_ohm = 0.028; // Ohms
+      // Temperature-dependent internal resistance (Arrhenius: higher T -> lower R)
+      // T_ref = 298.15 K (25°C)
+      const T_kelvin = 273.15 + temperature;
+      const E_act_R = 25000.0; // J/mol activation energy
+      const R_gas = 8.314;
+      const tempFactorR = Math.exp((E_act_R / R_gas) * (1.0 / T_kelvin - 1.0 / 298.15));
+      const R_ohm = 0.028 * tempFactorR; // Ohms
+
       let eta = 0.0;
       let newSoc = soc;
       let appliedCurrent = 0.0;
@@ -190,9 +197,11 @@ const VISUAL_CALIBRATION = {
 
       const voltage = Math.max(this.lowerCutoffV, Math.min(this.upperCutoffV, Ueq + eta));
 
-      // Diffusion-limited SEI growth: L_sei = sqrt(L_0^2 + 2*k*t)
+      // Temperature-dependent SEI growth (Arrhenius: higher T -> accelerated growth)
+      const E_act_sei = 35000.0; // J/mol
+      const tempFactorSEI = Math.exp((E_act_sei / R_gas) * (1.0 / 298.15 - 1.0 / T_kelvin));
       const tTot = Math.max(0, timeElapsed);
-      const k_sei = 1.6e-5; // nm^2/s effective rate
+      const k_sei = 1.6e-5 * tempFactorSEI; // nm^2/s effective rate
       const sei_thickness_nm = Math.sqrt(this.L_sei_init_nm * this.L_sei_init_nm + 2.0 * k_sei * tTot);
       const capacity_loss_ah = (sei_thickness_nm - this.L_sei_init_nm) * 0.018;
 
@@ -270,7 +279,9 @@ const VISUAL_CALIBRATION = {
     mode: 'idle', // 'idle' | 'charge' | 'discharge'
     isRunning: false,
     soc: 65.0,
-    current: 5.0,
+    currentCharge: 2.5,
+    currentDischarge: 5.0,
+    temperature: 25.0,
     voltage: 3.782,
     seiThicknessNm: 5.0,
     capacityLossAh: 0.0,
@@ -278,6 +289,12 @@ const VISUAL_CALIBRATION = {
     timeElapsed: 0,
     autoRotate: false
   };
+
+  function getActiveCurrent() {
+    if (state.mode === 'charge') return state.currentCharge;
+    if (state.mode === 'discharge') return state.currentDischarge;
+    return 0.0;
+  }
 
   const dataProvider = new SimulationDataProvider();
 
@@ -296,15 +313,25 @@ const VISUAL_CALIBRATION = {
   const hudQlli = document.getElementById('hud-qlli');
   const metricSohVal = document.getElementById('metric-soh-val');
 
-  // Input & Buttons
+  // Mode Buttons
   const btnModeIdle = document.getElementById('btn-mode-idle');
   const btnModeCharge = document.getElementById('btn-mode-charge');
   const btnModeDischarge = document.getElementById('btn-mode-discharge');
   const modeButtons = [btnModeIdle, btnModeCharge, btnModeDischarge];
 
-  const sliderCurrent = document.getElementById('slider-current');
-  const inputCurrent = document.getElementById('input-current');
-  const readoutCurrent = document.getElementById('readout-current');
+  // Temperature Controls
+  const sliderTemp = document.getElementById('slider-temp');
+  const inputTemp = document.getElementById('input-temp');
+  const readoutTemp = document.getElementById('readout-temp');
+
+  // Dual Current Controls (Charge & Discharge)
+  const sliderCurrentCharge = document.getElementById('slider-current-charge');
+  const inputCurrentCharge = document.getElementById('input-current-charge');
+  const readoutCurrentCharge = document.getElementById('readout-current-charge');
+
+  const sliderCurrentDischarge = document.getElementById('slider-current-discharge');
+  const inputCurrentDischarge = document.getElementById('input-current-discharge');
+  const readoutCurrentDischarge = document.getElementById('readout-current-discharge');
 
   const btnRun = document.getElementById('btn-run');
   const btnPause = document.getElementById('btn-pause');
@@ -728,10 +755,10 @@ const VISUAL_CALIBRATION = {
     if (state.isRunning) {
       if (state.mode === 'charge') {
         direction = 1;
-        baseSpeed = (0.35 + (state.current / 10.0) * 1.4) * VISUAL_CALIBRATION.ionSpeedMultiplier;
+        baseSpeed = (0.35 + (state.currentCharge / 10.0) * 1.4) * VISUAL_CALIBRATION.ionSpeedMultiplier;
       } else if (state.mode === 'discharge') {
         direction = -1;
-        baseSpeed = (0.35 + (state.current / 10.0) * 1.4) * VISUAL_CALIBRATION.ionSpeedMultiplier;
+        baseSpeed = (0.35 + (state.currentDischarge / 10.0) * 1.4) * VISUAL_CALIBRATION.ionSpeedMultiplier;
       }
     }
 
@@ -926,10 +953,12 @@ const VISUAL_CALIBRATION = {
     if (!state.isRunning) return;
 
     state.timeElapsed += delta;
+    const activeCurrent = getActiveCurrent();
 
     const result = await dataProvider.fetchCycleStep({
       mode: state.mode,
-      current: state.current,
+      current: activeCurrent,
+      temperature: state.temperature,
       soc: state.soc,
       timeElapsed: state.timeElapsed,
       delta: delta
@@ -955,7 +984,8 @@ const VISUAL_CALIBRATION = {
     hudVoltage.innerHTML = `${state.voltage.toFixed(3)} <span class="dp-unit">V</span>`;
     hudSoc.innerHTML = `${state.soc.toFixed(1)} <span class="dp-unit">%</span>`;
 
-    const signedCurrent = state.mode === 'charge' ? `+${state.current.toFixed(2)}` : (state.mode === 'discharge' ? `-${state.current.toFixed(2)}` : '0.00');
+    const activeCurrent = getActiveCurrent();
+    const signedCurrent = state.mode === 'charge' ? `+${activeCurrent.toFixed(2)}` : (state.mode === 'discharge' ? `-${activeCurrent.toFixed(2)}` : '0.00');
     hudCurrent.innerHTML = `${signedCurrent} <span class="dp-unit">A</span>`;
 
     hudSei.innerHTML = `${state.seiThicknessNm.toFixed(2)} <span class="dp-unit">nm</span>`;
@@ -982,25 +1012,68 @@ const VISUAL_CALIBRATION = {
     btnModeCharge.addEventListener('click', () => setMode('charge'));
     btnModeDischarge.addEventListener('click', () => setMode('discharge'));
 
-    sliderCurrent.addEventListener('input', (e) => {
+    // Charge Current Controls
+    sliderCurrentCharge.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
-      inputCurrent.value = val.toFixed(1);
-      setCurrent(val);
+      inputCurrentCharge.value = val.toFixed(1);
+      setChargeCurrent(val);
     });
 
-    inputCurrent.addEventListener('change', (e) => {
+    inputCurrentCharge.addEventListener('change', (e) => {
+      let val = parseFloat(e.target.value);
+      val = Math.max(0.5, Math.min(10.0, isNaN(val) ? 2.5 : val));
+      inputCurrentCharge.value = val.toFixed(1);
+      sliderCurrentCharge.value = val;
+      setChargeCurrent(val);
+    });
+
+    function setChargeCurrent(val) {
+      state.currentCharge = val;
+      const cRate = (val / dataProvider.nominalCapacityAh).toFixed(1);
+      readoutCurrentCharge.textContent = `${val.toFixed(2)} A (${cRate}C)`;
+      updateTelemetryHUD();
+    }
+
+    // Discharge Current Controls
+    sliderCurrentDischarge.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      inputCurrentDischarge.value = val.toFixed(1);
+      setDischargeCurrent(val);
+    });
+
+    inputCurrentDischarge.addEventListener('change', (e) => {
       let val = parseFloat(e.target.value);
       val = Math.max(0.5, Math.min(10.0, isNaN(val) ? 5.0 : val));
-      inputCurrent.value = val.toFixed(1);
-      sliderCurrent.value = val;
-      setCurrent(val);
+      inputCurrentDischarge.value = val.toFixed(1);
+      sliderCurrentDischarge.value = val;
+      setDischargeCurrent(val);
     });
 
-    function setCurrent(val) {
-      state.current = val;
+    function setDischargeCurrent(val) {
+      state.currentDischarge = val;
       const cRate = (val / dataProvider.nominalCapacityAh).toFixed(1);
-      readoutCurrent.textContent = `${val.toFixed(2)} A (${cRate}C)`;
+      readoutCurrentDischarge.textContent = `${val.toFixed(2)} A (${cRate}C)`;
       updateTelemetryHUD();
+    }
+
+    // Temperature Controls
+    sliderTemp.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      inputTemp.value = val.toFixed(1);
+      setTemperature(val);
+    });
+
+    inputTemp.addEventListener('change', (e) => {
+      let val = parseFloat(e.target.value);
+      val = Math.max(0.0, Math.min(60.0, isNaN(val) ? 25.0 : val));
+      inputTemp.value = val.toFixed(1);
+      sliderTemp.value = val;
+      setTemperature(val);
+    });
+
+    function setTemperature(val) {
+      state.temperature = val;
+      readoutTemp.textContent = `${val.toFixed(1)} °C`;
     }
 
     btnRun.addEventListener('click', () => {
@@ -1030,7 +1103,9 @@ const VISUAL_CALIBRATION = {
 
       const results = await dataProvider.fetchLifecycleSimulation({
         n_cycles: 100,
-        current: state.current
+        current_charge: state.currentCharge,
+        current_discharge: state.currentDischarge,
+        temperature: state.temperature
       });
 
       const finalSoh = results.SOH_percent[results.SOH_percent.length - 1];
