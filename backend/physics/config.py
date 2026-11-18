@@ -68,16 +68,16 @@ class BatteryGeometry:
     def B_p(self) -> float: return self.eps_p ** self.brug
 
     # Number of points in zones
-    @property
+    @cached_property
     def N_x_n(self) -> int: return int(np.round(self.L_n / self.dx))
 
-    @property
+    @cached_property
     def N_x_s(self) -> int: return int(np.round(self.L_s / self.dx))
 
-    @property
+    @cached_property
     def N_x_p(self) -> int: return int(np.round(self.L_p / self.dx))
 
-    @property
+    @cached_property
     def N_x_total(self) -> int: return self.N_x_n + self.N_x_s + self.N_x_p
 
     # Dynamic grids

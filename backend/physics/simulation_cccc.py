@@ -218,7 +218,7 @@ class BatterySimulation:
             events=event,
             rtol=1e-6,
             atol=self.atol,
-            max_step=180.0,
+            max_step=600.0,
             jac_sparsity=self.jac_sparsity, 
         )
 
