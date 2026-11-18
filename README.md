@@ -1,6 +1,6 @@
 # Physics-Based Battery Lifecycle Simulation with ML Residual Correction (LG M50T)
 
-**A research-oriented simulator for the LG M50T lithium-ion cell, combining electrochemical modelling, SEI ageing, simple machine-learning correction, and an interactive web interface.**
+**A simulator for the LG M50T lithium-ion cell, combining electrochemical modelling, SEI ageing, simple machine-learning correction, and an interactive web interface.**
 
 The project aims to predict how a cell's **capacity and state of health (SoH)** evolve during repeated charge–discharge cycles. It combines a simplified physics-based model with an optional data-driven correction rather than relying on a purely empirical prediction.
 
