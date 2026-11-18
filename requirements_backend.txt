@@ -1,10 +1,18 @@
+# Backend and API
 fastapi>=0.110,<1
 uvicorn>=0.27,<1
 pydantic>=2,<3
+
+# Scientific computing
 numpy>=1.26
 scipy>=1.11
+numba
+
+# Machine learning
 scikit-learn==1.9.1 # same version as existing Ridge .joblib artifact
 joblib>=1.3
 pandas>=2
+
+# Testing
 pytest>=8
 httpx>=0.27
