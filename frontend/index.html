@@ -226,6 +226,19 @@
                       <span class="input-unit-tag">A</span>
                     </div>
                   </div>
+                  <div class="current-input-wrapper">
+                    <input type="range" id="slider-current-discharge" min="0.5" max="10.0" step="0.1" value="5.0" class="scientific-range range-discharge">
+                    <div class="current-stepper">
+                      <input type="number" id="input-current-discharge" min="0.5" max="10.0" step="0.1" value="5.0" class="scientific-input">
+                      <span class="input-unit-tag">A</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="param-limits-row">
+                  <span>0.5 A (0.1C)</span>
+                  <span>Independent CC Protocol</span>
+                  <span>10.0 A (2.0C)</span>
                 </div>
 
                 <div class="param-limits-row">
@@ -238,6 +251,21 @@
               <!-- 3. Execution Control Buttons -->
               <div class="param-box param-box-actions">
                 <label class="param-label">3. SIMULATION EXECUTION</label>
+                <div class="lifecycle-inline-controls">
+                  <label for="input-n-cycles">CYCLES
+                    <input type="number" id="input-n-cycles" min="1" max="10000" step="1" value="10">
+                  </label>
+                  <label for="input-cycling-mode">CHARGE PROTOCOL
+                    <select id="input-cycling-mode">
+                      <option value="CC">CC / CC</option>
+                      <option value="CCCV">CC–CV / CC</option>
+                    </select>
+                  </label>
+                  <label class="lifecycle-checkbox" for="input-apply-ml">
+                    <input type="checkbox" id="input-apply-ml" checked>
+                    RIDGE CORRECTION
+                  </label>
+                </div>
                 <div class="execution-actions-row">
                   <button type="button" class="btn-exec btn-run" id="btn-run">
                     <svg viewBox="0 0 24 24" fill="currentColor" class="exec-icon">
@@ -267,7 +295,7 @@
                       <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
                       <polyline points="17 6 23 6 23 12"></polyline>
                     </svg>
-                    <span>SIMULATE 100 CYCLES</span>
+                    <span>SIMULATE 10 CYCLES</span>
                   </button>
                 </div>
               </div>
@@ -278,71 +306,49 @@
 
       </section>
 
-      <!-- Right Column: FastAPI Backend Telemetry Placeholder Panel -->
+      <!-- Right Column: native original telemetry card, fed by real lifecycle API -->
       <section class="telemetry-column">
-        
         <div class="card backend-placeholder-card">
           <div class="card-header">
             <div class="card-title-group">
               <span class="section-icon">⚡</span>
-              <h2>FastAPI Telemetry Stream</h2>
+              <h2>Battery degradation — SPMe + Ridge</h2>
             </div>
-            <span class="badge-tech">HTTP / REST Adapter</span>
+            <span class="badge-tech">Results</span>
           </div>
-
-          <div class="card-body placeholder-body">
-            <div class="placeholder-graphic">
-              <div class="pulse-ring"></div>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="placeholder-icon">
-                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-                <line x1="8" y1="21" x2="16" y2="21"></line>
-                <line x1="12" y1="17" x2="12" y2="21"></line>
-                <path d="M6 10l3 3 5-5 4 4"></path>
-              </svg>
-            </div>
-
-            <h3 class="placeholder-title">AWAITING FASTAPI BACKEND TELEMETRY</h3>
-            <p class="placeholder-desc">
-              Ready for <code>/api/simulate/step</code> &amp; <code>/api/simulate/lifecycle</code>.
-              Electrochemical state vectors (Terminal Voltage \(U(t)\), SOH %, SEI Layer \(L_{\text{sei}}\), and Active Lithium Inventory \(Q_{\text{LLI}}\)) will stream directly into real-time analytical plots upon backend server launch.
+          <div class="card-body telemetry-native-body">
+            <p id="telemetry-main-status" class="telemetry-status-line" hidden>
+              Ready: choose cycles, currents and temperature on the left, then run lifecycle.
             </p>
-
-            <div class="endpoint-status-grid">
-              <div class="endpoint-pill">
-                <span class="ep-method">POST</span>
-                <span class="ep-path">/api/simulate/step</span>
-                <span class="ep-status">READY</span>
-              </div>
-              <div class="endpoint-pill">
-                <span class="ep-method">POST</span>
-                <span class="ep-path">/api/simulate/lifecycle</span>
-                <span class="ep-status">READY</span>
-              </div>
-              <div class="endpoint-pill">
-                <span class="ep-method">GET</span>
-                <span class="ep-path">/api/health</span>
-                <span class="ep-status" id="ep-health-status">STANDBY</span>
-              </div>
-            </div>
-
             <div class="contract-spec-box">
               <div class="spec-header">
-                <span class="spec-label">ACTIVE CLIENT PAYLOAD SCHEMA:</span>
-                <span class="spec-state" id="metric-soh-val">SOH: 100.00%</span>
+                <span class="spec-label">LAST COMPLETED LIFECYCLE</span>
+                <span class="spec-state" id="metric-soh-val">SOH: 100% (3D DEMO)</span>
               </div>
-              <div class="spec-code-wrapper">
-                <pre class="spec-code"><code>{
-  "cell": "LG_INR21700_M50T",
-  "chemistry": "NMC811_SiGraphite",
-  "protocol": "CC_CYCLING",
-  "I_app": 5.0,
-  "cutoffs": { "V_min": 2.5, "V_max": 4.2 }
-}</code></pre>
-              </div>
+              <p id="lifecycle-summary" class="lifecycle-summary">
+                No physical lifecycle results yet.
+              </p>
             </div>
+            <div class="telemetry-chart-group">
+              <div class="chart-heading">DEGRADATION FORECAST · Physics vs Hybrid</div>
+              <div id="lifecycle-comparison-legend" class="chart-legend">● Physics (cyan)   ● Hybrid (amber)</div>
+              <svg id="plot-soh-comparison" class="lifecycle-plot" aria-label="Physical and hybrid SoH forecasts by cycle"></svg>
+            </div>
+            <div class="telemetry-chart-group">
+              <div class="chart-heading">PHYSICAL DEGRADATION FORECAST · SoH (%) · ZOOMED Y-AXIS</div>
+              <div class="chart-legend">Physics (SPMe + SEI + Thermal)</div>
+              <svg id="plot-soh-physics" class="lifecycle-plot" aria-label="Physical SoH forecast by cycle"></svg>
+            </div>
+            <div class="telemetry-chart-group">
+              <div class="chart-heading">SEI GROWTH · nm</div>
+              <div class="chart-legend">Increase in SEI thickness from initial value</div>
+              <svg id="plot-sei-growth" class="lifecycle-plot" aria-label="SEI thickness growth by cycle"></svg>
+            </div>
+            <p id="lifecycle-warnings" class="telemetry-disclaimer">
+              The 3D step mode currently uses an illustrative local approximation. Real SPMe lifecycle values are shown only after calculation.
+            </p>
           </div>
         </div>
-
       </section>
 
     </main>
@@ -357,7 +363,7 @@
         <span>INTEGRATOR: Scipy BDF (rtol=1e-6, atol=1e-5)</span>
       </div>
       <div class="footer-right">
-        <span class="api-contract-tag">REST API CONTRACT: <code>/api/simulate/step</code> &amp; <code>/api/simulate/lifecycle</code></span>
+        <span class="api-contract-tag">REST API CONTRACT: <code>/api/simulate/step</code> &amp; <code>/api/simulate/lifecycle/jobs</code></span>
       </div>
     </footer>
 

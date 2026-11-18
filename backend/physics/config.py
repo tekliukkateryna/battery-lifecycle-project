@@ -68,16 +68,16 @@ class BatteryGeometry:
     def B_p(self) -> float: return self.eps_p ** self.brug
 
     # Number of points in zones
-    @property
+    @cached_property
     def N_x_n(self) -> int: return int(np.round(self.L_n / self.dx))
 
-    @property
+    @cached_property
     def N_x_s(self) -> int: return int(np.round(self.L_s / self.dx))
 
-    @property
+    @cached_property
     def N_x_p(self) -> int: return int(np.round(self.L_p / self.dx))
 
-    @property
+    @cached_property
     def N_x_total(self) -> int: return self.N_x_n + self.N_x_s + self.N_x_p
 
     # Dynamic grids
@@ -122,10 +122,11 @@ class BatteryParameters:
     c_e_0: float = 1000.0
 
     # Activation energy (Arrhenius) [J/mol]
-    Ea_Ds_n: float = 0.0
-    Ea_Ds_p: float = 0.0
-    Ea_De: float = 0.0
     Ea_sei: float = 0
+
+    Ea_Ds_n: float = 30300.0
+    Ea_Ds_p: float = 25000.0
+    Ea_De: float = 17000.0
 
     # OCV curves
     # Chen2020 (LG M50 graphite and NMC)
@@ -181,7 +182,9 @@ class BatteryParameters:
 
     D_sol_ref: float = 2.5e-22 
     Ea_k_sei: float = 0.0       # [J/mol]
-    Ea_D_sol: float = 0.0       # [J/mol]
+    Ea_D_sol: float = 38000       # [J/mol]
+
+    
 
     U_sei: float = 0.4        # [V], provisional
     # Bulk solvent concentration [mol.m-3]
@@ -205,6 +208,8 @@ class BatteryParameters:
 class SimulationConfig:
 
     I_app: float = 5.0           # [A]
+    I_charge: float = 1.5
+    I_discharge: float = 5.0
     t_final: float = 3600.0
 
     theta_n_init: float = 0.9013973983641687
@@ -214,7 +219,7 @@ class SimulationConfig:
     lower_cut_off_V: float = 2.5
 
     c_e_init: float = 1000.0
-    T_init: float = 298.15
+    T_init: float = 283.15
 
     def initial_solid_concentrations(self, param):
         return (

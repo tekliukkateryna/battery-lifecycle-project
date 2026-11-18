@@ -1,3 +1,12 @@
+Як запускати?
+Backend:
+$env:BATT_SIM_ADAPTER="user_simulation_adapter:run_lifecycle"
+python -m uvicorn backend.battery_api.server:app --host 127.0.0.1 --port 8000
+Frontend: 
+cd frontend
+python -m http.server 5500
+http://127.0.0.1:5500
+=======
 !!!!!!!!!! Оновлено до етапу 2 !!!!!!!!!!!
 
 Щодо основних частин, проекту:

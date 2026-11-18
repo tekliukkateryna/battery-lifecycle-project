@@ -38,34 +38,31 @@ def _solid_diffusion_rhs_numba(
 
     return dc_s_dt
 
-
 @njit(fastmath=True)
 def _electrolyte_diffusion_rhs_numba(
-    c_e: np.ndarray,
-    D_e_bulk: float,
-    dx: float,
-    B_faces: np.ndarray,
-    eps: np.ndarray,
-    b_x: np.ndarray,
-    t_plus: float,
-    j_x: np.ndarray,
-    N_total: int
-) -> np.ndarray:
+    c_e, D_e_bulk, dx, B_faces, eps, source_per_current, i_app,
+):
+    """b_x * j_x / eps collapsed to a per-ampere constant"""
+    n_total = c_e.size
+    dc_dt = np.empty(n_total)
+    flux = np.empty(n_total + 1)
+    flux[0] = 0.0
+    flux[n_total] = 0.0
 
-    dc_e_dt = np.empty(N_total)
-    J_full = np.empty(N_total + 1)
-    J_full[0] = 0.0
-    J_full[N_total] = 0.0
+    for i in range(1, n_total):
+        flux[i] = (
+            -D_e_bulk * B_faces[i - 1]
+            * (c_e[i] - c_e[i - 1]) / dx
+        )
 
-    for i in range(1, N_total):
-        J_full[i] = -D_e_bulk * B_faces[i - 1] * (c_e[i] - c_e[i - 1]) / dx
+    for i in range(n_total):
+        dc_dt[i] = (
+            (flux[i] - flux[i + 1]) / (dx * eps[i])
+            + i_app * source_per_current[i]
+        )
 
-    for i in range(N_total):
-        diff = (J_full[i] - J_full[i + 1]) / dx
-        source = (1.0 - t_plus) * b_x[i] * j_x[i]
-        dc_e_dt[i] = (diff + source) / eps[i]
+    return dc_dt
 
-    return dc_e_dt
 
 class SolidDiffusion:
 
@@ -165,6 +162,16 @@ class ElectrolyteDiffusionSPMe:
             / (self.B_x[:-1] + self.B_x[1:])
         )
 
+        # Current-independent source; valid while geometry and parameters
+        # remain unchanged during a run.
+        self._source_per_current = np.zeros(geo.N_x_total)
+        self._source_per_current[:geo.N_x_n] = (
+            (1.0 - param.t_plus) / (geo.L_n * param.F * geo.eps_n)
+        )
+        self._source_per_current[geo.N_x_n + geo.N_x_s:] = (
+            -(1.0 - param.t_plus) / (geo.L_p * param.F * geo.eps_p)
+        )
+
     def compute_j_x(self, i_app: float) -> np.ndarray:
         geo = self.geo
         param = self.param
@@ -183,18 +190,14 @@ class ElectrolyteDiffusionSPMe:
             -(param.Ea_De / param.R) * (1.0 / T - 1.0 / 298.15)
         )
 
-        j_x = self.compute_j_x(i_app)
-
         return _electrolyte_diffusion_rhs_numba(
-            c_e=c_e,
-            D_e_bulk=D_e_bulk,
-            dx=geo.dx,
-            B_faces=self.B_faces,
-            eps=self.eps,
-            b_x=self.b_x,
-            t_plus=param.t_plus,
-            j_x=j_x,
-            N_total=geo.N_x_total
+            c_e, 
+            D_e_bulk, 
+            geo.dx, 
+            self.B_faces, 
+            self.eps,
+            self._source_per_current, 
+            i_app,
         )
 
 

@@ -68,8 +68,9 @@ const VISUAL_CALIBRATION = {
 
   class SimulationDataProvider {
     constructor(config = {}) {
-      this.baseUrl = config.baseUrl || 'http://localhost:8000/api';
-      this.useLiveBackend = config.useLiveBackend || false;
+      this.baseUrl = config.baseUrl || 'http://127.0.0.1:8000/api';
+      this.useLiveBackend = false;
+      this.stepReady = false;
 
       // LG M50T Cell Reference Constants (Chen et al., 2020)
       this.nominalCapacityAh = 5.0; // 5000 mAh
@@ -83,41 +84,44 @@ const VISUAL_CALIBRATION = {
     async checkBackendHealth() {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1200);
-        const res = await fetch(`${this.baseUrl}/health`, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (res.ok) {
-          this.useLiveBackend = true;
-          this._updateBackendBadge(true);
-          return true;
+        const timeoutId = setTimeout(() => controller.abort(), 2500);
+        let res;
+        try {
+          res = await fetch(`${this.baseUrl}/health`, { signal: controller.signal });
+        } finally {
+          clearTimeout(timeoutId);
         }
-      } catch (e) {
+        const health = res.ok ? await res.json() : {};
+        this.useLiveBackend = Boolean(res.ok && health.simulation_ready);
+        this.stepReady = Boolean(res.ok && health.step_ready);
+      } catch (error) {
         this.useLiveBackend = false;
-        this._updateBackendBadge(false);
+        this.stepReady = false;
       }
-      return false;
+      this._updateBackendBadge();
+      return this.useLiveBackend;
     }
 
-    _updateBackendBadge(isLive) {
+    _updateBackendBadge() {
       const badge = document.getElementById('status-backend-badge');
       const healthEp = document.getElementById('ep-health-status');
-      if (badge) {
-        if (isLive) {
-          badge.textContent = 'CONNECTED // FASTAPI LIVE';
-          badge.style.color = 'var(--accent-cyan)';
-          if (healthEp) {
-            healthEp.textContent = 'ONLINE (200 OK)';
-            healthEp.style.color = 'var(--accent-emerald)';
-          }
-        } else {
-          badge.textContent = 'FASTAPI READY (LOCAL SPMe)';
-          badge.style.color = 'var(--accent-emerald)';
-          if (healthEp) {
-            healthEp.textContent = 'STANDBY';
-            healthEp.style.color = 'var(--accent-cyan)';
-          }
-        }
-      }
+      const stepEp = document.getElementById('ep-step-status');
+      const lifeEp = document.getElementById('ep-lifecycle-status');
+      const set = (node, value, color) => {
+        if (node) { node.textContent = value; node.style.color = color; }
+      };
+      set(badge,
+        this.useLiveBackend ? 'CONNECTED // SPMe LIFECYCLE' : 'SPMe API OFFLINE',
+        this.useLiveBackend ? 'var(--accent-cyan)' : 'var(--accent-amber)');
+      set(healthEp,
+        this.useLiveBackend ? 'SPMe READY' : 'OFFLINE',
+        this.useLiveBackend ? 'var(--accent-emerald)' : 'var(--accent-amber)');
+      set(lifeEp,
+        this.useLiveBackend ? 'READY' : 'OFFLINE',
+        this.useLiveBackend ? 'var(--accent-emerald)' : 'var(--accent-amber)');
+      set(stepEp,
+        this.stepReady ? 'LIVE STEP' : 'DEMO ONLY',
+        this.stepReady ? 'var(--accent-emerald)' : 'var(--accent-amber)');
     }
 
     /**
@@ -149,7 +153,7 @@ const VISUAL_CALIBRATION = {
      * Schema strictly matches BatterySimulation.diagnostics()
      */
     async fetchCycleStep(params) {
-      if (this.useLiveBackend) {
+      if (this.stepReady) {
         try {
           const res = await fetch(`${this.baseUrl}/simulate/step`, {
             method: 'POST',
@@ -216,58 +220,41 @@ const VISUAL_CALIBRATION = {
     }
 
     /**
-     * Fetch or compute multi-cycle lifecycle degradation trajectory.
-     * Schema strictly matches BatterySimulation.run_cycles()["cycle_summary"]
+     * Launch the user's real SPMe + SEI + Ridge calculation as a background job.
+     * Never silently substitute demo data for a failed scientific calculation.
      */
-    async fetchLifecycleSimulation(params) {
-      if (this.useLiveBackend) {
-        try {
-          const res = await fetch(`${this.baseUrl}/simulate/lifecycle`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(params)
-          });
-          if (res.ok) return await res.json();
-        } catch (err) {
-          console.warn('[DataProvider] Remote lifecycle call failed, using local model:', err);
+    async fetchLifecycleSimulation(params, onStatus = () => {}) {
+      if (!this.useLiveBackend) await this.checkBackendHealth();
+      if (!this.useLiveBackend) throw new Error('SPMe FastAPI is offline or simulation_ready=false');
+      const request = async (path, options = {}) => {
+        const res = await fetch(`${this.baseUrl}${path}`, options);
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const detail = body.detail ?? body.error ?? `HTTP ${res.status}`;
+          throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+        }
+        return body;
+      };
+      const created = await request('/simulate/lifecycle/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+      });
+      onStatus('queued');
+      if (!created.job_id) throw new Error('Backend did not return job_id');
+      const url = `/simulate/lifecycle/jobs/${encodeURIComponent(created.job_id)}`;
+      for (;;) {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        const job = await request(url);
+        onStatus(job.status);
+        if (job.status === 'completed') {
+          if (!job.result) throw new Error('Completed job has no result');
+          return job.result;
+        }
+        if (job.status === 'failed' || job.status === 'cancelled') {
+          throw new Error(job.error || `Simulation ${job.status}`);
         }
       }
-
-      const nCycles = params.n_cycles || 100;
-      const current = params.current || 5.0;
-
-      const cycles = [];
-      const capacities = [];
-      const soh_percent = [];
-      const capacity_fade_percent = [];
-      const sei_thickness_nm = [];
-      const capacity_loss_ah = [];
-
-      const Q_init = 4.885;
-
-      for (let c = 1; c <= nCycles; c++) {
-        cycles.push(c);
-        const sei_nm = this.L_sei_init_nm + 1.25 * Math.sqrt(c);
-        const q_loss = 0.0085 * Math.sqrt(c);
-        const q_dis = Math.max(3.2, Q_init - q_loss * (1.0 + 0.12 * (current / 5.0)));
-        const soh = (q_dis / Q_init) * 100.0;
-        const fade = 100.0 - soh;
-
-        capacities.push(Number(q_dis.toFixed(4)));
-        soh_percent.push(Number(soh.toFixed(3)));
-        capacity_fade_percent.push(Number(fade.toFixed(3)));
-        sei_thickness_nm.push(Number(sei_nm.toFixed(2)));
-        capacity_loss_ah.push(Number(q_loss.toFixed(4)));
-      }
-
-      return {
-        cycle: cycles,
-        discharge_capacity_Ah: capacities,
-        SOH_percent: soh_percent,
-        capacity_fade_percent: capacity_fade_percent,
-        sei_thickness_nm: sei_thickness_nm,
-        capacity_loss_ah: capacity_loss_ah
-      };
     }
   }
 
@@ -286,6 +273,7 @@ const VISUAL_CALIBRATION = {
     seiThicknessNm: 5.0,
     capacityLossAh: 0.0,
     soh: 100.0,
+    lifecycleSnapshot: null, // completed cycle-level SPMe values, not animated 3D frame data
     timeElapsed: 0,
     autoRotate: false
   };
@@ -337,6 +325,9 @@ const VISUAL_CALIBRATION = {
   const btnPause = document.getElementById('btn-pause');
   const btnReset = document.getElementById('btn-reset');
   const btnRunLifecycle = document.getElementById('btn-run-lifecycle');
+  const inputCycles = document.getElementById('input-n-cycles');
+  const inputCyclingMode = document.getElementById('input-cycling-mode');
+  const inputApplyMl = document.getElementById('input-apply-ml');
   const btnCameraReset = document.getElementById('btn-camera-reset');
   const btnAutoRotate = document.getElementById('btn-autorotate-toggle');
 
@@ -992,15 +983,145 @@ const VISUAL_CALIBRATION = {
     const qLossMah = (state.capacityLossAh * 1000.0).toFixed(1);
     hudQlli.innerHTML = `${qLossMah} <span class="dp-unit">mAh</span>`;
 
-    const liveSoh = (100.0 - (state.capacityLossAh / dataProvider.nominalCapacityAh) * 100.0).toFixed(2);
+    const liveSoh = state.lifecycleSnapshot
+      ? state.lifecycleSnapshot.soh
+      : 100.0 - (state.capacityLossAh / dataProvider.nominalCapacityAh) * 100.0;
     if (metricSohVal) {
-      metricSohVal.textContent = `SOH: ${liveSoh}%`;
+      metricSohVal.textContent = state.lifecycleSnapshot
+        ? `SOH: ${liveSoh.toFixed(2)}% (${state.lifecycleSnapshot.cycle} CYCLES)`
+        : `SOH: ${liveSoh.toFixed(2)}% (3D DEMO)`;
     }
   }
 
   function setEngineStatus(text, statusClass) {
     engineStatusLabel.textContent = text;
     engineStatusTag.className = `engine-status-tag ${statusClass || ''}`;
+  }
+
+  // Render actual API series in the EXISTING right-hand FastAPI telemetry card.
+  // SVG uses the proper namespace and needs no extra chart dependencies.
+  function renderCycleChart(id, cycles, datasets, unit, sharedRange = null, autoZoomY = false) {
+    const svg = document.getElementById(id);
+    if (!svg) return;
+    const ns = 'http://www.w3.org/2000/svg';
+    svg.replaceChildren();
+    svg.setAttribute('viewBox', '0 0 610 235');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', unit + ' by cycle');
+    const w = 610, h = 235, L = 60, R = 15, T = 15, B = 35;
+    const valid = datasets.flatMap(d => d.values).filter(Number.isFinite);
+    if (!cycles.length || !valid.length) return;
+    // Comparison uses the full Physics + Hybrid range. Physics-only can
+    // zoom to its own much smaller variation; no SoH data is changed.
+    let lo = sharedRange ? sharedRange[0] : Math.min(...valid);
+    let hi = sharedRange ? sharedRange[1] : Math.max(...valid);
+    if (autoZoomY && hi === lo) {
+      // Constant data: give the horizontal line a sensible, finite scale.
+      const halfSpan = Math.max(Math.abs(lo), 1) * 1e-6;
+      lo -= halfSpan;
+      hi += halfSpan;
+    }
+    const pad = autoZoomY ? (hi - lo) * 0.08 : Math.max((hi - lo) * 0.08, 0.02);
+    lo -= pad; hi += pad;
+    // More decimal places when physical SoH changes by thousandths of a %.
+    const yTickStep = (hi - lo) / 4;
+    const yDecimals = autoZoomY
+      ? Math.min(8, Math.max(2, Math.ceil(-Math.log10(yTickStep)) + 1))
+      : 2;
+    const xmin = Math.min(...cycles), xmax = Math.max(...cycles);
+    const x = n => L + (n - xmin) / (xmax - xmin || 1) * (w - L - R);
+    const y = n => T + (hi - n) / (hi - lo) * (h - T - B);
+    const element = (tag, attrs = {}, content = null) => {
+      const node = document.createElementNS(ns, tag);
+      for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+      if (content !== null) node.textContent = content;
+      svg.appendChild(node);
+      return node;
+    };
+    for (let i = 0; i <= 4; i++) {
+      const yy = T + i * (h - T - B) / 4;
+      element('line', { x1: L, y1: yy, x2: w - R, y2: yy, stroke: '#2a3749', 'stroke-width': 1 });
+      element('text', { x: L - 8, y: yy + 3, fill: '#8b9bb0', 'font-size': 11,
+        'text-anchor': 'end' }, (hi - i * (hi - lo) / 4).toFixed(yDecimals));
+    }
+    element('line', { x1: L, y1: h - B, x2: w - R, y2: h - B, stroke: '#8b9bb0' });
+    element('text', { x: L, y: h - 8, fill: '#8b9bb0', 'font-size': 11 }, String(xmin));
+    element('text', { x: w - R, y: h - 8, fill: '#8b9bb0', 'font-size': 11,
+      'text-anchor': 'end' }, String(xmax));
+    element('text', { x: w / 2, y: h - 8, fill: '#8b9bb0', 'font-size': 11,
+      'text-anchor': 'middle' }, 'Cycle');
+    datasets.forEach(dataset => {
+      const d = dataset.values.map((val, i) =>
+        `${i === 0 ? 'M' : 'L'}${x(cycles[i]).toFixed(2)},${y(val).toFixed(2)}`).join(' ');
+      element('path', { d, fill: 'none', stroke: dataset.color,
+        'stroke-width': 2.4, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
+    });
+  }
+
+  function renderLifecycleAnalytics(result) {
+    const cycles = result.cycle;
+    if (!Array.isArray(cycles) || !cycles.length) throw new Error('Missing cycle array');
+    const required = ['SOH_physical_percent', 'sei_thickness_nm', 'capacity_loss_ah'];
+    for (const name of required) {
+      if (!Array.isArray(result[name]) || result[name].length !== cycles.length)
+        throw new Error(`Invalid series: ${name}`);
+    }
+    const physicalSeries = result.SOH_physical_percent;
+    if (!Array.isArray(physicalSeries) || physicalSeries.length !== cycles.length ||
+        !physicalSeries.every(Number.isFinite)) {
+      throw new Error('Invalid SOH_physical_percent series');
+    }
+    const hybrid = Array.isArray(result.SOH_hybrid_percent) &&
+      result.SOH_hybrid_percent.length === cycles.length &&
+      result.SOH_hybrid_percent.every(Number.isFinite)
+      ? result.SOH_hybrid_percent : null;
+    const last = result.inference?.final;
+    if (!last) throw new Error('Missing inference.final');
+    const physical = Number(last.soh_physical_percent);
+    const shown = hybrid && last.soh_hybrid_percent != null
+      ? Number(last.soh_hybrid_percent) : physical;
+    if (!Number.isFinite(physical) || !Number.isFinite(shown)) throw new Error('Invalid final SoH');
+    const fmt = (v, digits = 2) => v == null ? '—' : Number(v).toFixed(digits);
+    document.getElementById('lifecycle-summary').textContent =
+      `${last.cycle} cycles · SPMe SoH ${fmt(physical)}% · ` +
+      `${hybrid ? `SPMe + Ridge SoH ${fmt(shown)}% · ` : ''}` +
+      `SEI ${fmt(last.sei_thickness_nm, 3)} nm · LLI ${fmt(last.capacity_loss_ah, 5)} Ah`;
+
+    // Comparison uses a shared SoH scale. Physics-only gets a tighter Y-axis
+    // to reveal the curvature of the smaller physical degradation signal.
+    const allSoh = hybrid ? physicalSeries.concat(hybrid) : physicalSeries;
+    const sharedSohRange = [Math.min(...allSoh), Math.max(...allSoh)];
+    const comparisonDatasets = [{ values: physicalSeries, color: '#38bdf8' }];
+    if (hybrid) comparisonDatasets.push({ values: hybrid, color: '#f59e0b' });
+    renderCycleChart('plot-soh-comparison', cycles, comparisonDatasets, 'SoH (%)', sharedSohRange);
+    renderCycleChart('plot-soh-physics', cycles, [
+      { values: physicalSeries, color: '#38bdf8' }
+    ], 'Physics SoH (%)', null, true);
+    const comparisonLegend = document.getElementById('lifecycle-comparison-legend');
+    if (comparisonLegend) comparisonLegend.textContent = hybrid
+      ? '● Physics (cyan)   ● Hybrid (amber)'
+      : '● Physics (cyan)   ·   Hybrid disabled';
+
+    // SEI growth is relative to initial SEI thickness, NOT total SEI thickness.
+    const initialSei = Number(result.initial_sei_thickness_nm);
+    const seiGrowth = Array.isArray(result.sei_growth_nm) &&
+      result.sei_growth_nm.length === cycles.length &&
+      result.sei_growth_nm.every(Number.isFinite)
+      ? result.sei_growth_nm
+      : (Number.isFinite(initialSei) &&
+         result.sei_thickness_nm.every(Number.isFinite)
+         ? result.sei_thickness_nm.map(v => v - initialSei) : null);
+    if (!seiGrowth) throw new Error('Missing valid SEI growth data');
+    renderCycleChart('plot-sei-growth', cycles, [
+      { values: seiGrowth, color: '#34d399' }
+    ], 'SEI growth (nm)');
+    const warnings = result.inference?.warnings || [];
+    document.getElementById('lifecycle-warnings').textContent =
+      `ML status: ${result.inference?.ml_status ?? 'unknown'}. ` + warnings.join(' ');
+    state.lifecycleSnapshot = { cycle: Number(last.cycle), soh: shown };
+    state.seiThicknessNm = Number(last.sei_thickness_nm);
+    if (last.capacity_loss_ah !== null) state.capacityLossAh = Number(last.capacity_loss_ah);
+    updateTelemetryHUD();
   }
 
   // =========================================================================
@@ -1077,8 +1198,9 @@ const VISUAL_CALIBRATION = {
     }
 
     btnRun.addEventListener('click', () => {
+      state.lifecycleSnapshot = null;
       state.isRunning = true;
-      setEngineStatus('SIMULATION RUNNING', 'running');
+      setEngineStatus(dataProvider.stepReady ? 'SIMULATION RUNNING' : '3D STEP DEMO (NOT SPMe)', 'running');
     });
 
     btnPause.addEventListener('click', () => {
@@ -1088,6 +1210,7 @@ const VISUAL_CALIBRATION = {
 
     btnReset.addEventListener('click', () => {
       state.isRunning = false;
+      state.lifecycleSnapshot = null;
       state.soc = 65.0;
       state.timeElapsed = 0;
       state.seiThicknessNm = 5.0;
@@ -1098,22 +1221,51 @@ const VISUAL_CALIBRATION = {
     });
 
     btnRunLifecycle.addEventListener('click', async () => {
-      setEngineStatus('SOLVING 100 CYCLES...', 'running');
-      btnRunLifecycle.disabled = true;
-
-      const results = await dataProvider.fetchLifecycleSimulation({
-        n_cycles: 100,
-        current_charge: state.currentCharge,
-        current_discharge: state.currentDischarge,
-        temperature: state.temperature
-      });
-
-      const finalSoh = results.SOH_percent[results.SOH_percent.length - 1];
-      if (metricSohVal) {
-        metricSohVal.textContent = `SOH: ${finalSoh.toFixed(2)}% (100 CYCLES)`;
+      const cycles = Number(inputCycles.value);
+      if (!Number.isInteger(cycles) || cycles < 1 || cycles > 10000) {
+        setEngineStatus('INVALID CYCLE COUNT', 'paused');
+        return;
       }
-      setEngineStatus('100 CYCLES SOLVED', '');
-      btnRunLifecycle.disabled = false;
+      state.isRunning = false; // freeze demo 3D telemetry while real lifecycle solves
+      state.lifecycleSnapshot = null;
+      setMode('idle'); // no misleading applied current while processing cycles
+      btnRunLifecycle.disabled = true;
+      const mainStatus = document.getElementById('telemetry-main-status');
+      mainStatus.textContent = `Running SPMe ${cycles} cycles…`;
+      setEngineStatus(`SOLVING ${cycles} CYCLES (SPMe)...`, 'running');
+      try {
+        const results = await dataProvider.fetchLifecycleSimulation({
+          n_cycles: cycles,
+          current: state.currentDischarge,
+          charge_current_A: state.currentCharge,
+          temperature_C: state.temperature,
+          cycling_mode: inputCyclingMode.value,
+          protocol_id: 'custom',
+          apply_ml: inputApplyMl.checked,
+          initial_soc_percent: 100,
+          upper_cutoff_V: 4.2,
+          lower_cutoff_V: 2.5,
+          enable_thermal: true
+        }, jobStatus => {
+          mainStatus.textContent = `SPMe job: ${jobStatus}…`;
+        });
+        renderLifecycleAnalytics(results);
+        mainStatus.textContent = `SPMe completed: ${results.cycle.length} cycles. ` +
+          'Plots and SEI/LLI are physical solver data. 3D voltage/SoC remain demo values.';
+        setEngineStatus(`${results.cycle.length} CYCLES SOLVED (SPMe)`, '');
+      } catch (error) {
+        console.error('[BATT-SIM] Lifecycle failed:', error);
+        mainStatus.textContent = `SPMe error: ${error.message}`;
+        setEngineStatus('SPMe SOLVER ERROR', 'paused');
+      } finally {
+        btnRunLifecycle.disabled = false;
+      }
+    });
+    inputCycles.addEventListener('change', () => {
+      const n = Math.trunc(Number(inputCycles.value));
+      if (Number.isInteger(n) && n > 0) {
+        btnRunLifecycle.querySelector('span').textContent = `SIMULATE ${n} CYCLES`;
+      }
     });
 
     btnCameraReset.addEventListener('click', () => {
@@ -1219,7 +1371,16 @@ const VISUAL_CALIBRATION = {
     start: () => btnRun.click(),
     pause: () => btnPause.click(),
     reset: () => btnReset.click(),
-    runLifecycle: (cycles) => dataProvider.fetchLifecycleSimulation({ n_cycles: cycles || 100 })
+    runLifecycle: (cycles) => dataProvider.fetchLifecycleSimulation({
+      n_cycles: cycles || Number(inputCycles.value) || 10,
+      current: state.currentDischarge,
+      charge_current_A: state.currentCharge,
+      temperature_C: state.temperature,
+      cycling_mode: inputCyclingMode.value,
+      apply_ml: inputApplyMl.checked,
+      initial_soc_percent: 100,
+      protocol_id: 'custom'
+    })
   };
 
 })();
