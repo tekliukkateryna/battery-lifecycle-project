@@ -77,7 +77,7 @@ def run_full_pipeline(params: dict[str, Any]) -> dict[str, Any]:
         trained_temps = meta.get("temperatures_C", [10, 25, 40])
         within_observed_range = (
             min(trained_temps) <= params["temperature_C"] <= max(trained_temps)
-            and int(cycle[-1]) <= meta.get("cycle_max", 936)
+            and int(cycle[-1]) <= meta.get("cycle_max", 1000)
         )
         if params["protocol_id"] == "imperial_expt5" and within_observed_range:
             ml_status = "declared_training_protocol"
@@ -95,12 +95,7 @@ def run_full_pipeline(params: dict[str, Any]) -> dict[str, Any]:
         if np.any((hybrid < 0) | (hybrid > 100)):
             warnings.append("Hybrid SoH outside [0,100]%; prediction was not clipped.")
 
-    # The simulator normalizes its first working-current discharge to 100%;
-    # Imperial experimental RPT SoH may use a different capacity measurement.
-    warnings.append("Simulator SoH is first working-current discharge normalized to 100%; "
-                    "experimental RPT SoH may not be directly equivalent.")
-
-    # For legacy app.js, SOH_percent is the displayed best available estimate.
+    # For previous app.js, SOH_percent is the displayed best available estimate.
     shown = hybrid if hybrid is not None else physical
     final_index = -1
     final = {

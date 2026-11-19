@@ -1,4 +1,4 @@
-"""Ridge residual features copied exactly from train_residual_ridge(1).py."""
+"""Ridge residual features copied exactly from train_residual_ridge.py."""
 from pathlib import Path
 import os
 import joblib
@@ -25,7 +25,6 @@ def predict_residual(cycles: np.ndarray, temperature_C: float) -> np.ndarray:
     path = model_path()
     if not path.is_file():
         raise FileNotFoundError(f"Trained Ridge artifact not found: {path}")
-    # joblib files are trusted local artifacts; never load from untrusted uploads.
     model = joblib.load(path)
     features = make_features(
         np.asarray(cycles, dtype=float),
