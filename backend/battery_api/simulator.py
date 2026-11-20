@@ -3,7 +3,8 @@ import importlib
 import os
 from typing import Callable, Any
 
-
+# Connection to the adapter via environment variable. Could be done easier just by importing the module directly, 
+# as architecture turned out to be simples, than expected, but let it be for now. 
 def load_callable(env_name: str) -> Callable[[dict], dict] | None:
     entry = os.getenv(env_name, "").strip()
     if not entry:

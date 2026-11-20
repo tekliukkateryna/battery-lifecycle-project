@@ -259,7 +259,6 @@ class TerminalVoltage:
         )
 
     def dphi_f(self, i_app: float, L_sei: float) -> float:
-        # return 0
         
         return (
             i_app * L_sei

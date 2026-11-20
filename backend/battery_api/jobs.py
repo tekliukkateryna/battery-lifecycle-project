@@ -23,8 +23,8 @@ class JobStore:
     def submit(self, payload: dict) -> str:
         with self._lock:
             outstanding = sum(not j.future.done() for j in self._jobs.values())
-            if outstanding >= 3:
-                raise RuntimeError("Three calculations are already queued or running")
+            if outstanding >= 1:
+                raise RuntimeError("One calculation is already queued or running")
             job_id = str(uuid4())
             self._jobs[job_id] = Job(future=self._pool.submit(run_full_pipeline, payload))
             return job_id
